@@ -9,11 +9,11 @@
 // below, or that button/input silently stops working with no error.
 // If you add a new onclick in index.html later, add its function here too.
 
-import { bookings, adminLoggedIn, setAdminLoggedIn, setSessionToken } from './state.js';
+import { bookings, adminLoggedIn } from './state.js';
 import { todayStr } from './domain/time.js';
 import { toast, updateClock } from './utils/dom-helpers.js';
 import { loadData } from './api/supabase-client.js';
-import { doLogin, doLogout, closeLogin, requireAdmin } from './api/auth.js';
+import { doLogin, doLogout, closeLogin, requireAdmin, restoreSession, expireSession } from './api/auth.js';
 import { notifyTeams } from './api/notifications.js';
 
 import { showPage } from './ui/pages.js';
@@ -174,8 +174,11 @@ setInterval(() => {
   if (!adminLoggedIn) return;
   const idleFor = Date.now() - _lastActivityAt;
   if (idleFor > SESSION_TIMEOUT_MS) {
-    setAdminLoggedIn(false);
-    setSessionToken(null);
+    // expireSession() signs out at the Supabase level too. Clearing only the
+    // in-memory flags would leave the persisted session intact, and the
+    // restoreSession() call in init() would then log the admin straight back
+    // in on the next refresh — silently cancelling the idle timeout.
+    expireSession();
     _sessionWarningShown = false;
     document.getElementById('logout-btn').style.display = 'none';
     showPage('status');
@@ -198,6 +201,10 @@ window.addEventListener('beforeunload', e => {
 // INIT
 // ============================================================
 async function init() {
+  // Before anything else: if a valid admin session survived the reload,
+  // pick it back up so a refresh doesn't appear to log the admin out.
+  await restoreSession();
+
   populateRoomSelects();
   document.getElementById('f-date').value = todayStr();
   updateClock();
