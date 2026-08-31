@@ -115,14 +115,32 @@ begin
 end;
 $$;
 
+-- CORRECTED BOUNDS. The first version of this migration allowed decoded
+-- values up to 4000000000000 (year 2096) and produced created_at dates in
+-- 2055-2059 for legacy rows. Those rows also begin with 'b' followed by 8
+-- base36 chars, but the chars are not a timestamp — verified against live
+-- data: 'bzxt8e8j3...' decodes to 2059-03-31. A real creation time cannot be
+-- in the future, so the upper bound is now(). Rows failing the check are left
+-- NULL rather than defaulted to now(), because defaulting them would make the
+-- oldest rows look like the newest.
+alter table public.bookings alter column created_at drop not null;
+alter table public.bookings alter column created_at drop default;
+
+update public.bookings set created_at = null;
+
 update public.bookings
 set created_at = to_timestamp(public.base36_to_bigint(substring(booking_id from 2 for 8)) / 1000.0)
 where booking_id ~ '^b[0-9a-z]{8}'
-  and public.base36_to_bigint(substring(booking_id from 2 for 8)) between 1000000000000 and 4000000000000;
+  and public.base36_to_bigint(substring(booking_id from 2 for 8))
+      between 1704067200000                                      -- 2024-01-01
+          and (extract(epoch from now()) * 1000)::bigint + 86400000;
 
--- Legacy rows keep created_at = now() from the DEFAULT, since their real
--- creation time isn't recorded anywhere and cannot be recovered. Check what
--- you're left with before relying on it for sorting:
+-- New rows get a real timestamp from here on.
+alter table public.bookings alter column created_at set default now();
+
+-- Legacy rows are left with created_at = NULL: their real creation time is
+-- not recorded anywhere and cannot be recovered. Sort them as oldest (in
+-- Postgres, `order by created_at desc nulls last`). Check the result:
 --   select booking_id, booking_date, created_at from public.bookings
 --   order by created_at desc limit 20;
 

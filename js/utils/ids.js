@@ -28,5 +28,20 @@ export function creationMs(id) {
   const head = String(id || '').slice(0, 9);
   if (!/^b[0-9a-z]{8}$/.test(head)) return -1;
   const ms = parseInt(head.slice(1), 36);
-  return Number.isFinite(ms) ? ms : -1;
+  if (!Number.isFinite(ms)) return -1;
+  // The format check alone is NOT enough. Legacy rows also start with 'b'
+  // followed by 8 base36 chars, but those chars are not a timestamp —
+  // decoding them gives dates in 2055-2059 (verified against live data:
+  // 'bzxt8e8j3...' -> 2059-03-31). Because 'bz' > 'bm' lexicographically AND
+  // 2059 > 2026 numerically, those rows outranked every genuine booking in
+  // "Recently Added" either way. A real creation time cannot be in the
+  // future, so range-check it: that cleanly separates the two id families.
+  if (ms > Date.now() + DAY_MS) return -1;   // decoded to the future -> not a timestamp
+  if (ms < EARLIEST_PLAUSIBLE_MS) return -1; // decoded before this app existed
+  return ms;
 }
+
+const DAY_MS = 86400000;
+// 2024-01-01. Nothing in this system predates it, so anything earlier is a
+// coincidental decode rather than a real creation time.
+const EARLIEST_PLAUSIBLE_MS = 1704067200000;
