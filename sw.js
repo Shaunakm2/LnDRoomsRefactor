@@ -4,11 +4,16 @@
 // app.js after every deploy. This only falls back to cache when there's
 // genuinely no network (e.g. brief connectivity drop), not as the default.
 
-const CACHE_NAME = 'ldrooms-shell-v1';
+const CACHE_NAME = 'ldrooms-shell-v2';
+// NOTE: root-level app.js no longer exists — the app is now ~24 ES modules
+// under js/. cache.addAll() rejects wholesale if ANY entry 404s, which would
+// silently abort service worker installation entirely, so app.js is removed
+// rather than replaced with a hand-maintained list of 24 module paths.
+// The network-first fetch handler below caches each module the first time
+// it's fetched, so offline fallback still fills in after one online visit.
 const APP_SHELL = [
   './',
   'index.html',
-  'app.js',
   'style.css',
   'manifest.json',
 ];
