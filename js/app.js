@@ -203,7 +203,7 @@ window.addEventListener('beforeunload', e => {
 async function init() {
   // Before anything else: if a valid admin session survived the reload,
   // pick it back up so a refresh doesn't appear to log the admin out.
-  await restoreSession();
+  if (await restoreSession()) showPage('admin');
 
   populateRoomSelects();
   document.getElementById('f-date').value = todayStr();
