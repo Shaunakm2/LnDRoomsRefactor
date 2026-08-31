@@ -15,12 +15,17 @@
 <meta name="apple-mobile-web-app-title" content="IMS L&D Rooms">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<!-- Self-hosted, NOT CDN. Edge's Tracking Prevention blocks storage access
-     for third-party script origins, which broke Supabase auth entirely
-     (sign-in returned 400 with no usable error). Same-origin copies also
-     survive CDN outages, work offline via the service worker, and pin the
-     exact version instead of tracking a floating major tag. -->
-<script src="vendor/xlsx.full.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<!-- Supabase SDK is SELF-HOSTED, deliberately not loaded from a CDN. Edge's
+     Tracking Prevention blocks storage access for third-party script
+     origins, and this SDK needs storage to persist the auth session — so on
+     a browser with tracking protection enabled, sign-in fails with an
+     unhelpful 400 and no usable error. A same-origin copy can't be blocked.
+     Pinned to 2.112.4, the exact version the CDN was already serving, so a
+     breaking minor release can't land unannounced.
+     XLSX stays on its CDN above: it never touches storage, so tracking
+     prevention doesn't affect it, and npm only carries 0.18.5 (SheetJS
+     publishes 0.20.3 solely via their own CDN). -->
 <script src="vendor/supabase.min.js"></script>
 
 <link rel="stylesheet" href="style.css">
