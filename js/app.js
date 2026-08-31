@@ -24,6 +24,7 @@ import {
   showError, toggleRecurring, submitBooking, deleteBooking, confirmDelete,
   getSelectedIds, updateBulkBar, onRowCbChange, toggleSelectAll,
   clearBulkSelection, bulkApprove, bulkCancel, bulkDelete, exportExcel,
+  onFilterChange, onSortChange,
 } from './ui/admin-table.js';
 import {
   updatePendingDot, renderPendingRequests, toggleModifyForm, approvePending,
@@ -132,6 +133,7 @@ Object.assign(window, {
   showError, toggleRecurring, submitBooking, deleteBooking, confirmDelete,
   getSelectedIds, updateBulkBar, onRowCbChange, toggleSelectAll,
   clearBulkSelection, bulkApprove, bulkCancel, bulkDelete, exportExcel,
+  onFilterChange, onSortChange,
   // pending list
   updatePendingDot, renderPendingRequests, toggleModifyForm, approvePending,
   modifyAndApprove, openRejectModal, confirmReject, getPendingSelectedIds,
