@@ -17,7 +17,6 @@ const APP_SHELL = [
   'style.css',
   'manifest.json',
   'vendor/supabase.min.js',
-  'vendor/xlsx.full.min.js',
 ];
 
 self.addEventListener('install', (event) => {
