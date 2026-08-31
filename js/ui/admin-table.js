@@ -7,7 +7,7 @@
 import { ROOMS, roomName, PAGE_SIZE } from '../config.js';
 import {
   bookings, tablePage, setTablePage, tablePageLocked, setTablePageLocked,
-  deleteTargetId, setDeleteTargetId, setBookings
+  deleteTargetId, setDeleteTargetId, setBookings, setSortField, setSortDir
 } from '../state.js';
 import { getFilteredBookings, bookingTimeStatus } from '../domain/filters-sort.js';
 import { todayStr, minutesSinceMidnight, addDaysStr, isOvernight, getWeekdays } from '../domain/time.js';
@@ -126,6 +126,26 @@ export function goToPage(page) {
   setTablePageLocked(true);
   renderTable();
   setTablePageLocked(false);
+}
+
+// ---- Filter/sort controls (index.html) ----
+// Pre-refactor, index.html's filter and sort inputs assigned straight to
+// app.js's module-level _tablePage/_sortField/_sortDir from inline onchange
+// attributes. Those variables now live in state.js and are unreachable from
+// inline HTML — an inline `_sortField = 'room'` just created an unread
+// window global, so the sort dropdown silently did nothing. These two
+// functions give the HTML a plain call that routes through the real setters.
+export function onFilterChange() {
+  setTablePage(0);
+  renderTable();
+}
+
+export function onSortChange(sel) {
+  const [field, dir] = (sel?.value || '').split('-');
+  if (field) setSortField(field);
+  if (dir) setSortDir(dir);
+  setTablePage(0);
+  renderTable();
 }
 
 // ---- Active-now sidebar widget ----
