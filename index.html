@@ -15,8 +15,13 @@
 <meta name="apple-mobile-web-app-title" content="IMS L&D Rooms">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Self-hosted, NOT CDN. Edge's Tracking Prevention blocks storage access
+     for third-party script origins, which broke Supabase auth entirely
+     (sign-in returned 400 with no usable error). Same-origin copies also
+     survive CDN outages, work offline via the service worker, and pin the
+     exact version instead of tracking a floating major tag. -->
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/supabase.min.js"></script>
 
 <link rel="stylesheet" href="style.css">
 </head>
