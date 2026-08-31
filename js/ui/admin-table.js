@@ -337,10 +337,19 @@ export async function submitBooking(e) {
       const computedEndDate = endDateOverride || (minutesSinceMidnight(end) < minutesSinceMidnight(start) ? addDaysStr(date, 1) : date);
       const booking = { id, room, booker, purpose, date, start, end, attendees: attendees || '', status: origStatus, endDate: computedEndDate };
       const idx = bookings.findIndex(b => b.id === id);
+      // Keep the pre-edit row so a failed write can be undone. Without this,
+      // the table shows the edit as saved while the database still holds the
+      // old values, and the change silently reverts on the next refresh.
+      const prevRow = idx !== -1 ? bookings[idx] : null;
       if (idx !== -1) bookings[idx] = booking;
-      await apiUpdate(booking);
+      try {
+        await apiUpdate(booking);
+      } catch (err) {
+        if (idx !== -1 && prevRow) bookings[idx] = prevRow;
+        throw err;
+      }
       toast('Booking updated.');
-    } catch (err) { toast('Error saving. Try again.', true); } finally { showLoadingOverlay(false); }
+    } catch (err) { showError('Could not save the booking — nothing was changed. Check your connection and try again.'); } finally { showLoadingOverlay(false); }
     resetForm(); renderTable(); renderActiveNow(); renderStatusGrid();
     return;
   }
@@ -360,10 +369,23 @@ export async function submitBooking(e) {
         const computedEndDate = minutesSinceMidnight(end) < minutesSinceMidnight(start) ? addDaysStr(d, 1) : d;
         const booking = { id: genId(), room, booker, purpose, date: d, start, end, attendees: attendees || '', status: 'Confirmed', endDate: computedEndDate };
         bookings.push(booking);
-        await apiCreate(booking);
+        try {
+          await apiCreate(booking);
+        } catch (err) {
+          // This path already deleted the original, so a partial failure
+          // leaves the database in a genuinely mixed state that no local
+          // rollback can reconstruct. Drop the row that failed, then reload
+          // from the server so the admin sees exactly what was actually
+          // saved rather than an optimistic guess.
+          setBookings(bookings.filter(b => b.id !== booking.id));
+          throw err;
+        }
       }
       toast(`Booking updated across ${dates.length} date(s).`);
-    } catch (err) { toast('Error saving. Try again.', true); } finally { showLoadingOverlay(false); }
+    } catch (err) {
+      await loadData();
+      showError('Some dates could not be saved. The list has been reloaded from the server — check which dates exist before retrying.');
+    } finally { showLoadingOverlay(false); }
     resetForm(); renderTable(); renderActiveNow(); renderStatusGrid();
     return;
   }
@@ -378,17 +400,40 @@ export async function submitBooking(e) {
   }
 
   if (conflictDates.length === 0) {
+    let created = 0;
+    let failed = false;
     try {
       showLoadingOverlay(true);
       for (const d of dates) {
         const computedEndDate = minutesSinceMidnight(end) < minutesSinceMidnight(start) ? addDaysStr(d, 1) : d;
         const booking = { id: genId(), room, booker, purpose, date: d, start, end, attendees: attendees || '', status: 'Confirmed', endDate: computedEndDate };
         bookings.push(booking);
-        await apiCreate(booking);
+        try {
+          await apiCreate(booking);
+          created++;
+        } catch (err) {
+          // ROLLBACK. The row was added to `bookings` optimistically so the
+          // table updates instantly, but the insert failed — so remove it
+          // again. Leaving it in place was the original bug: the booking
+          // looked saved, survived until the next loadData(), then vanished
+          // without trace because it had never reached the database.
+          setBookings(bookings.filter(b => b.id !== booking.id));
+          failed = true;
+          throw err;
+        }
       }
       toast(dates.length === 1 ? 'Room booked successfully.' : `${dates.length} recurring bookings created (Mon–Fri).`);
-    } catch (err) { toast('Error saving. Try again.', true); } finally { showLoadingOverlay(false); }
-    resetForm(); renderTable(); renderActiveNow(); renderStatusGrid();
+    } catch (err) {
+      // Deliberately an in-form error, not a toast. A toast auto-dismisses
+      // and is easy to miss, which is how failed saves went unnoticed.
+      showError(created === 0
+        ? 'The booking was NOT saved. Nothing has been created — check your connection and try again.'
+        : `Only ${created} of ${dates.length} dates were saved. The unsaved dates have been removed from the list — retry those.`);
+    } finally { showLoadingOverlay(false); }
+    // Keep the form populated on failure so the admin doesn't have to retype
+    // everything; only clear it once the save actually succeeded.
+    if (!failed) resetForm();
+    renderTable(); renderActiveNow(); renderStatusGrid();
   } else {
     openConflictModal({ room, booker, purpose, start, end, attendees, cleanDates, conflictDates });
   }
@@ -411,11 +456,20 @@ export async function confirmDelete() {
   document.getElementById('delete-modal').style.display = 'none';
   try {
     showLoadingOverlay(true);
+    // Snapshot before the optimistic removal so a failed delete can be undone
+    // — otherwise the row disappears from the table while still existing in
+    // the database, and reappears on the next refresh.
+    const prevBookings = [...bookings];
     setBookings(bookings.filter(b => b.id !== idToDelete));
-    await apiDelete(idToDelete);
+    try {
+      await apiDelete(idToDelete);
+    } catch (err) {
+      setBookings(prevBookings);
+      throw err;
+    }
     toast('Booking deleted.');
   } catch (e) {
-    toast('Error deleting booking. Try again.', true);
+    toast('Could not delete the booking — it is still there. Try again.', true);
   } finally {
     showLoadingOverlay(false);
   }
@@ -467,6 +521,7 @@ export async function bulkApprove() {
   if (ids.length === 0) return;
   if (!(await showConfirmModal(`Approve ${ids.length} booking(s)?`, 'Approve All', 'btn-approve'))) return;
   showLoadingOverlay(true);
+  const prevStatuses = new Map(ids.map(id => [id, bookings.find(b => b.id === id)?.status]));
   try {
     ids.forEach(id => {
       const idx = bookings.findIndex(b => b.id === id);
@@ -475,7 +530,15 @@ export async function bulkApprove() {
     await apiUpdateStatusBatch(ids, 'Confirmed');
     toast(`${ids.length} booking(s) approved.`);
     notifyTeams({ event: 'batchApproved', count: ids.length });
-  } catch (e) { toast('Error during bulk approve.', true); }
+  } catch (e) {
+    // Restore each row's previous status — the batch update is atomic, so a
+    // failure means none of them changed server-side.
+    prevStatuses.forEach((status, id) => {
+      const idx = bookings.findIndex(b => b.id === id);
+      if (idx !== -1 && status) bookings[idx].status = status;
+    });
+    toast('Bulk approve failed — no bookings were changed.', true);
+  }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
 }
