@@ -45,33 +45,53 @@ export function getFilteredBookings() {
   else if (filterDate === 'upcoming') filtered = filtered.filter(b => bookingTimeStatus(b) !== 'past');
   else if (filterDate === 'past') filtered = filtered.filter(b => bookingTimeStatus(b) === 'past');
 
-  filtered.sort((a, b) => {
-    let va, vb;
-    if (sortField === 'bookingdate') {
-      va = a.date + (a.start || '00:00');
-      vb = b.date + (b.start || '00:00');
-    } else if (sortField === 'room') {
-      va = roomName(a.room).toLowerCase();
-      vb = roomName(b.room).toLowerCase();
-    } else if (sortField === 'status') {
-      va = (a.status || '').toLowerCase();
-      vb = (b.status || '').toLowerCase();
-    } else {
+  // ---- Sorting ----
+  // Every dropdown option must do exactly what its label says.
+  // Sort keys are precomputed once per booking rather than derived inside
+  // the comparator: the "Soonest" ordering needs bookingTimeStatus(), which
+  // expands each booking's spans, and a comparator runs O(n log n) times.
+  const keyed = filtered.map(b => ({
+    b,
+    dateKey: (b.date || '') + (b.start || '00:00'),
+    isPast: bookingTimeStatus(b) === 'past',
+    roomKey: roomName(b.room).toLowerCase(),
+    statusKey: (b.status || '').toLowerCase(),
+    idKey: b.id || ''
+  }));
+
+  const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+  const dir = sortDir === 'asc' ? 1 : -1;
+
+  if (sortField === 'bookingdate' && sortDir === 'asc') {
+    // "Booking Date (Soonest)" — the next booking that hasn't happened yet
+    // sits at the top. A plain ascending date sort would instead surface the
+    // oldest row in the table, which is not what "soonest" means. Anything
+    // already finished drops below, most-recent-first, so the list reads as
+    // distance from now in both directions. In-progress bookings count as
+    // upcoming, since they are the soonest thing there is.
+    keyed.sort((x, y) => {
+      if (x.isPast !== y.isPast) return x.isPast ? 1 : -1;
+      return x.isPast ? cmp(y.dateKey, x.dateKey) : cmp(x.dateKey, y.dateKey);
+    });
+  } else {
+    keyed.sort((x, y) => {
+      // Direction applies to the labelled column only. Ties break on date
+      // ascending so equal rows land in a stable, readable order rather
+      // than whatever order they happened to load in.
+      if (sortField === 'room')   return dir * cmp(x.roomKey, y.roomKey)     || cmp(x.dateKey, y.dateKey);
+      if (sortField === 'status') return dir * cmp(x.statusKey, y.statusKey) || cmp(x.dateKey, y.dateKey);
+      // 'bookingdate' desc = "Latest": furthest-future booking first.
+      if (sortField === 'bookingdate') return dir * cmp(x.dateKey, y.dateKey);
       // Creation time, encoded in the booking id as 'b' + base36 timestamp
       // + random suffix. IMPORTANT: compare as a STRING, not parseInt(id) —
-      // the timestamp portion contains letters (base36), so parseInt with
-      // no radix fails immediately on the first letter, returning NaN -> 0
-      // for every row. That made an earlier version of this sort a
-      // complete no-op (every row got the same key). String comparison
-      // works because every id has the same fixed-width structure, so
-      // lexicographic order exactly matches chronological order.
-      va = a.id || '';
-      vb = b.id || '';
-    }
-    if (va < vb) return sortDir === 'asc' ? -1 : 1;
-    if (va > vb) return sortDir === 'asc' ? 1 : -1;
-    return 0;
-  });
+      // the timestamp portion contains letters (base36), so parseInt with no
+      // radix fails on the first letter and returns NaN -> 0 for every row,
+      // which made this sort a silent no-op in an earlier version. String
+      // comparison works because every id has the same fixed-width
+      // structure, so lexicographic order matches chronological order.
+      return dir * cmp(x.idKey, y.idKey);
+    });
+  }
 
-  return filtered;
+  return keyed.map(k => k.b);
 }
