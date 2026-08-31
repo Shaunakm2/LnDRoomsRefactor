@@ -25,6 +25,42 @@ export function requireAdmin() {
   }
 }
 
+// Restore an admin session on page load.
+// supabase-js persists the session in localStorage, so a refresh does NOT
+// sign you out at the Supabase level — but `adminLoggedIn` is an in-memory
+// `let` in state.js and resets to false, so the app forgot it was logged in
+// and demanded the password again. Ask Supabase what the real state is
+// instead of assuming.
+export async function restoreSession() {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    const session = data?.session;
+    if (error || !session) return false;
+    // Only trust a session belonging to the admin account. Any other user
+    // (or a stale session from a different project) is ignored.
+    if ((session.user?.email || '').toLowerCase() !== ADMIN_EMAIL.toLowerCase()) return false;
+    setAdminLoggedIn(true);
+    setSessionToken(session.access_token);
+    setLastActivityAt(Date.now());
+    const btn = document.getElementById('logout-btn');
+    if (btn) btn.style.display = '';
+    return true;
+  } catch (e) {
+    console.error('Session restore failed:', e);
+    return false;
+  }
+}
+
+// Called by the idle-timeout watchdog in app.js. MUST actually sign out at
+// the Supabase level, not just clear the in-memory flags — otherwise the
+// persisted session survives and restoreSession() would hand the panel
+// straight back on the next refresh, defeating the timeout entirely.
+export async function expireSession() {
+  try { await supabase.auth.signOut(); } catch (e) { /* clear local state regardless */ }
+  setAdminLoggedIn(false);
+  setSessionToken(null);
+}
+
 export async function doLogout() {
   await supabase.auth.signOut();
   setAdminLoggedIn(false);
@@ -37,7 +73,6 @@ export async function doLogout() {
 export async function doLogin() {
   const pw = document.getElementById('login-pw').value;
   if (!pw) return;
-  console.log('DEBUG pw length:', pw.length, JSON.stringify(pw));
   // Real, server-enforced rate limiting — this RPC call must succeed
   // before we're even allowed to attempt the actual sign-in. Unlike a
   // client-side-only counter (trivially bypassed by refreshing the page),
