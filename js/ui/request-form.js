@@ -67,6 +67,12 @@ export function openRequestModal(roomId) {
 }
 
 export function closeRequestModal() {
+  // Guard lives HERE, not in index.html's inline onclick. Before the module
+  // split, the backdrop handler read `!reqSubmitting` directly — but that
+  // variable is module-private now and unreachable from an inline attribute,
+  // so the handler threw ReferenceError on every backdrop click. Keeping the
+  // check inside the function means the HTML stays a plain call.
+  if (reqSubmitting) return;
   document.getElementById('request-modal').style.display = 'none';
   const recEl = document.getElementById('req-recurring');
   if (recEl) recEl.checked = false;
