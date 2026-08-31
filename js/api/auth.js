@@ -108,6 +108,11 @@ export async function doLogin() {
       showPage('admin');
       toast('Welcome, Admin.');
     } else {
+      // Record the failure server-side. check_login_rate_limit() no longer
+      // logs attempts itself (it used to log successes too, which counted
+      // normal use toward the lockout), so failures must be reported here.
+      // Fire-and-forget: a logging outage must never block a real login.
+      supabase.rpc('log_failed_login').catch(() => {});
       setLoginAttempts(loginAttempts + 1);
       if (loginAttempts + 1 >= MAX_LOGIN_ATTEMPTS) {
         setLoginLockedUntil(Date.now() + LOCKOUT_MS);

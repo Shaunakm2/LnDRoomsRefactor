@@ -10,6 +10,7 @@ import { getLiveConflicts, findConflict, formatLiveConflictNote } from '../domai
 import { fmtDate, fmtTime, displayPurpose } from '../utils/formatting.js';
 import { escHtml, toast, showLoadingOverlay, showConfirmModal } from '../utils/dom-helpers.js';
 import { apiUpdateStatus, apiUpdate, apiUpdateStatusBatch } from '../api/bookings.js';
+import { loadData } from '../api/supabase-client.js';
 import { notifyTeams } from '../api/notifications.js';
 import { openApprovalConflictModal } from './conflict-picker.js';
 import { renderStatusGrid } from './status-grid.js';
@@ -116,7 +117,15 @@ export async function approvePending(id) {
     await apiUpdateStatus(id, 'Confirmed');
     toast('Booking approved ✅');
     notifyTeams({ event: 'approved', room: roomName(b.room), bookedBy: b.booker, purpose: b.purpose, date: b.date, start: fmtTime(b.start), end: fmtTime(b.end) });
-  } catch (e) { toast('Error approving booking.', true); }
+  } catch (e) {
+    // The status/row was updated locally BEFORE the write, so on failure the
+    // table would show a change the database never accepted — and it would
+    // silently revert on the next refresh. Resync from the server instead of
+    // guessing: it is the source of truth, and this only costs a fetch on a
+    // path that has already failed.
+    await loadData();
+    toast('Could not approve the booking. No changes were saved.', true);
+  }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
 }
@@ -141,7 +150,15 @@ export async function modifyAndApprove(id) {
     await apiUpdate(b);
     toast('Booking modified & approved ✅');
     notifyTeams({ event: 'approved', room: roomName(b.room), bookedBy: b.booker, purpose: b.purpose, date: b.date, start: fmtTime(b.start), end: fmtTime(b.end) });
-  } catch (e) { toast('Error updating booking.', true); }
+  } catch (e) {
+    // The status/row was updated locally BEFORE the write, so on failure the
+    // table would show a change the database never accepted — and it would
+    // silently revert on the next refresh. Resync from the server instead of
+    // guessing: it is the source of truth, and this only costs a fetch on a
+    // path that has already failed.
+    await loadData();
+    toast('Could not update the booking. No changes were saved.', true);
+  }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
 }
@@ -167,7 +184,15 @@ export async function confirmReject() {
     await apiUpdateStatus(id, 'Rejected');
     toast('Request rejected.');
     if (b) notifyTeams({ event: 'deletedOrRejected', room: roomName(b.room), bookedBy: b.booker, purpose: b.purpose, date: b.date, start: fmtTime(b.start), end: fmtTime(b.end) });
-  } catch (e) { toast('Error rejecting request.', true); }
+  } catch (e) {
+    // The status/row was updated locally BEFORE the write, so on failure the
+    // table would show a change the database never accepted — and it would
+    // silently revert on the next refresh. Resync from the server instead of
+    // guessing: it is the source of truth, and this only costs a fetch on a
+    // path that has already failed.
+    await loadData();
+    toast('Could not reject the request. No changes were saved.', true);
+  }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
 }
@@ -234,7 +259,15 @@ export async function bulkApprovePending() {
     let msg = `${cleanIds.length} request(s) approved ✅`;
     if (conflictItems.length > 0) msg += ` — ${conflictItems.length} have conflicts, resolve below.`;
     toast(msg);
-  } catch (e) { toast('Error during bulk approve.', true); }
+  } catch (e) {
+    // The status/row was updated locally BEFORE the write, so on failure the
+    // table would show a change the database never accepted — and it would
+    // silently revert on the next refresh. Resync from the server instead of
+    // guessing: it is the source of truth, and this only costs a fetch on a
+    // path that has already failed.
+    await loadData();
+    toast('Bulk approve failed. No changes were saved.', true);
+  }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
 
@@ -259,7 +292,15 @@ export async function bulkRejectPending() {
       }
     }
     toast(`${rejected} request(s) rejected.`);
-  } catch (e) { toast('Error during bulk reject.', true); }
+  } catch (e) {
+    // The status/row was updated locally BEFORE the write, so on failure the
+    // table would show a change the database never accepted — and it would
+    // silently revert on the next refresh. Resync from the server instead of
+    // guessing: it is the source of truth, and this only costs a fetch on a
+    // path that has already failed.
+    await loadData();
+    toast('Bulk reject failed — some may have been rejected before the error. No changes were saved.', true);
+  }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
 }

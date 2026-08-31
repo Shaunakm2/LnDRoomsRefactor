@@ -4,6 +4,7 @@
 
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from '../config.js';
 import { setBookings } from '../state.js';
+import { creationMs } from '../utils/ids.js';
 import { toast, showLoadingOverlay } from '../utils/dom-helpers.js';
 
 // `window.supabase` here is the global injected by the Supabase JS SDK
@@ -55,12 +56,10 @@ export async function loadData(silent = false) {
       conflictResolved: !!r.conflict_resolved,
       conflictNote: String(r.conflict_note || '').trim()
     }));
-    // Sort by creation time, embedded in the booking id itself.
-    mapped.sort((a, b) => {
-      const ta = a.id || '';
-      const tb = b.id || '';
-      return tb > ta ? 1 : (tb < ta ? -1 : 0); // newest created first
-    });
+    // Newest created first. Uses creationMs() rather than comparing id
+    // strings — legacy rows have ids without the 'b' prefix and would
+    // otherwise sort above everything the app has ever created.
+    mapped.sort((a, b) => creationMs(b.id) - creationMs(a.id));
     setBookings(mapped);
   } catch (e) {
     console.error('Load error', e);

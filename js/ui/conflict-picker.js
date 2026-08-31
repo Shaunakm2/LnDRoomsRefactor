@@ -15,6 +15,7 @@ import { findConflict } from '../domain/conflicts.js';
 import { fmtDate, fmtTime } from '../utils/formatting.js';
 import { escHtml, toast, showLoadingOverlay } from '../utils/dom-helpers.js';
 import { genId } from '../utils/ids.js';
+import { loadData } from '../api/supabase-client.js';
 import { apiCreate, apiUpdate, apiUpdateStatus, apiCreateRequestBatch } from '../api/bookings.js';
 import { notifyTeams } from '../api/notifications.js';
 import { renderStatusGrid } from './status-grid.js';
@@ -192,7 +193,11 @@ export async function confirmConflictResolution() {
       if (skipped > 0) msg += `, ${skipped} left Pending.`;
       toast(msg);
     } catch (err) {
-      toast('Error approving. Try again.', true);
+      // Statuses were flipped locally before each write, and this loop can
+      // fail part-way through, so the local array is now an unreliable mix.
+      // Resync from the server rather than trying to reconstruct it.
+      await loadData();
+      toast('Approval failed part-way. The list has been reloaded — check which requests went through.', true);
     } finally {
       showLoadingOverlay(false);
     }
@@ -285,7 +290,11 @@ export async function confirmConflictResolution() {
     if (skipped > 0) msg += ` ${skipped} date(s) skipped.`;
     toast(msg);
   } catch (err) {
-    toast('Error saving bookings. Try again.', true);
+    // Bookings were pushed locally before each insert and this loop can fail
+    // part-way, so some rows on screen may never have reached the database.
+    // Resync so the admin sees exactly what actually saved.
+    await loadData();
+    toast('Some bookings could not be saved. The list has been reloaded — check which dates exist before retrying.', true);
   } finally {
     showLoadingOverlay(false);
   }
