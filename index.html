@@ -186,18 +186,18 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
           <div class="search-input-wrap">
             <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="text" id="search-input" placeholder="Search by name, room, or purpose..." oninput="_tablePage=0;renderTable()">
+            <input type="text" id="search-input" placeholder="Search by name, room, or purpose..." oninput="onFilterChange()">
           </div>
-          <select id="filter-room" onchange="_tablePage=0;renderTable()" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
+          <select id="filter-room" onchange="onFilterChange()" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
             <option value="">All rooms</option>
           </select>
-          <select id="filter-date" onchange="_tablePage=0;renderTable()" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
+          <select id="filter-date" onchange="onFilterChange()" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
             <option value="">All dates</option>
             <option value="today">Today</option>
             <option value="upcoming">Upcoming</option>
             <option value="past">Past</option>
           </select>
-          <select id="filter-sort" onchange="_tablePage=0;_sortField=this.value.split('-')[0];_sortDir=this.value.split('-')[1];renderTable();" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
+          <select id="filter-sort" onchange="onSortChange(this)" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
             <option value="bookingdate-asc" selected>Booking Date (Soonest)</option>
             <option value="bookingdate-desc">Booking Date (Latest)</option>
             <option value="datetime-desc">Recently Added</option>
@@ -207,7 +207,7 @@
             <option value="status-asc">Status (A–Z)</option>
           </select>
           <label style="display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);font-size:14px;cursor:pointer;white-space:nowrap;user-select:none;">
-            <input type="checkbox" id="filter-conflicts-only" onchange="_tablePage=0;renderTable()" style="accent-color:var(--danger);width:15px;height:15px;cursor:pointer;">
+            <input type="checkbox" id="filter-conflicts-only" onchange="onFilterChange()" style="accent-color:var(--danger);width:15px;height:15px;cursor:pointer;">
             ⚠️ Conflicts only
           </label>
           <button class="btn btn-ghost" onclick="exportExcel()" style="white-space:nowrap">&#8595; Export Excel</button>
@@ -265,7 +265,7 @@
 </div>
 
 <!-- REQUEST BOOKING MODAL -->
-<div class="modal-overlay" id="request-modal" style="display:none;" onclick="if(event.target===this&&!reqSubmitting)closeRequestModal()">
+<div class="modal-overlay" id="request-modal" style="display:none;" onclick="if(event.target===this)closeRequestModal()">
   <div class="modal-box-lg">
     <div id="req-form-view">
       <div class="modal-title">Request a Booking</div>
