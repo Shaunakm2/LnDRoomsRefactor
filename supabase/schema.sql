@@ -14,6 +14,13 @@
 -- for months purely because the live database and this file had drifted —
 -- release_own_booking existed only in the database and so was never
 -- reviewed, and it turned out to let anyone extend any booking.
+--
+-- Last hardening pass (see sections 2, 3, 6, 7, 8):
+--   - The three "Admins can ..." policies were unconditional against the
+--     `authenticated` role. Now gated on public.is_admin(). Section 2.
+--   - pg_temp added to search_path on every SECURITY DEFINER function.
+--   - Section 12 gained checks for both of the above, plus a view check.
+--   - Section 13 records reviewed-but-unapplied items.
 -- ============================================================
 
 
@@ -83,21 +90,52 @@ create policy "Public can create pending requests"
     and (conflict_note is null or conflict_note = '')
   );
 
+-- Identity check for the three admin policies below.
+--
+-- These policies previously used `using (true)` / `with check (true)` against
+-- the `authenticated` role. Postgres ignores policy NAMES, so despite being
+-- called "Admins can ...", ANY authenticated session had full insert, update
+-- and delete on every booking. The only thing preventing that was signups
+-- being disabled in the Supabase dashboard — a single control, living in a UI
+-- rather than in this file, that nobody was reviewing.
+--
+-- Two independent controls now: dashboard signups disabled stops accounts
+-- being created, and this stops a created account from doing anything.
+--
+-- Keep this address in step with ADMIN_EMAIL in js/config.js. Changing the
+-- admin requires editing BOTH. Pinning to auth.uid() instead would survive an
+-- email change, but email keeps the two files legible side by side.
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+set search_path = public, pg_temp
+as $$
+  select coalesce((auth.jwt() ->> 'email') = 'shaunakmistry4@gmail.com', false)
+$$;
+
+-- Only the three policies below call this, and all three apply to the
+-- `authenticated` role only, so anon never evaluates it and must not hold the
+-- default PUBLIC execute grant — otherwise is_admin appears in the section 12
+-- anon_can_call check and muddies the expected list.
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+
 create policy "Admins can insert any booking"
   on public.bookings for insert
   to authenticated
-  with check (true);
+  with check (public.is_admin());
 
 create policy "Admins can update bookings"
   on public.bookings for update
   to authenticated
-  using (true)
-  with check (true);
+  using (public.is_admin())
+  with check (public.is_admin());
 
 create policy "Admins can delete bookings"
   on public.bookings for delete
   to authenticated
-  using (true);
+  using (public.is_admin());
 
 
 -- ============================================================
@@ -106,6 +144,14 @@ create policy "Admins can delete bookings"
 -- These are the ONLY way an anonymous caller can modify a row. Both run as
 -- the owner and bypass RLS, so their internal checks ARE the security
 -- boundary — the client-side name check in cancel-release.js is a UX nicety.
+--
+-- On `set search_path = public, pg_temp` (used on every SECURITY DEFINER
+-- function in this file): naming pg_temp explicitly is required, not
+-- cosmetic. If it is omitted, Postgres searches the temp schema FIRST for
+-- relation names, and TEMPORARY is granted to PUBLIC by default — so a caller
+-- can create a temp table named `bookings` and have a definer function
+-- operate on theirs instead of the real one. Keep it on every definer
+-- function added here.
 --
 -- KNOWN WEAKNESS, accepted: the identity check compares the typed name
 -- against booked_by, but booked_by is world-readable via the SELECT policy
@@ -120,7 +166,7 @@ create or replace function public.cancel_own_booking(
 returns json
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_row public.bookings;
@@ -154,7 +200,7 @@ create or replace function public.release_own_booking(
 returns json
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_row     public.bookings;
@@ -223,13 +269,16 @@ create table if not exists public.bookings_archive (like public.bookings includi
 -- table sat world-readable AND world-writable — holding archived copies of
 -- every booking — until it was enabled. No policies are defined, so nothing
 -- but service_role (which bypasses RLS) can touch it.
+--
+-- RLS ON WITH ZERO POLICIES IS INTENTIONAL here too. Do not add policies. Do
+-- not set FORCE ROW LEVEL SECURITY.
 alter table public.bookings_archive enable row level security;
 
 create or replace function public.archive_old_bookings(p_days integer default 90)
 returns integer
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_count integer;
@@ -293,13 +342,18 @@ create table if not exists public.booking_rate_log (
 create index if not exists idx_rate_log_actor_time
   on public.booking_rate_log (actor, created_at);
 alter table public.booking_rate_log enable row level security;
--- No policies: only the SECURITY DEFINER trigger below touches this table.
+-- RLS ON WITH ZERO POLICIES IS INTENTIONAL. This denies all access to anon and
+-- authenticated. Writes still work because rls_forced = false, so the owner
+-- bypasses RLS and the SECURITY DEFINER trigger below (which runs as owner)
+-- is unaffected. DO NOT add policies here to "fix" the 0 count, and DO NOT set
+-- FORCE ROW LEVEL SECURITY — either would break the trigger silently, with no
+-- error and nothing in the logs.
 
 create or replace function public.enforce_booking_rate_limit()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_actor      text;
@@ -344,6 +398,7 @@ create trigger trg_enforce_booking_rate_limit
 create or replace function public.enforce_room_capacity()
 returns trigger
 language plpgsql
+set search_path = public, pg_temp
 as $$
 declare
   v_cap integer;
@@ -395,13 +450,15 @@ alter table public.login_attempt_log
 create index if not exists login_attempt_log_ip_time_idx
   on public.login_attempt_log (ip, created_at desc);
 alter table public.login_attempt_log enable row level security;
--- No policies: only the SECURITY DEFINER functions below touch this table.
+-- RLS ON WITH ZERO POLICIES IS INTENTIONAL — see the note on booking_rate_log
+-- in section 6. Only the SECURITY DEFINER functions below touch this table.
+-- Do not add policies. Do not set FORCE ROW LEVEL SECURITY.
 
 create or replace function public.check_login_rate_limit()
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_recent_cnt integer;
@@ -439,7 +496,7 @@ create or replace function public.log_failed_login()
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 begin
   insert into public.login_attempt_log (ip) values (inet_client_addr());
@@ -529,3 +586,64 @@ $$;
 --   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --   where n.nspname = 'public'
 --   order by anon_can_call desc, p.proname;
+--
+-- Every SECURITY DEFINER function must name pg_temp. Expect zero rows:
+--
+--   select p.proname, p.proconfig
+--   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--   where n.nspname = 'public' and p.prosecdef
+--     and not coalesce(array_to_string(p.proconfig, ',') like '%pg_temp%', false);
+--
+-- No admin policy may be unconditional. Expect zero rows:
+--
+--   select policyname, cmd, qual, with_check from pg_policies
+--   where schemaname = 'public' and tablename = 'bookings'
+--     and policyname like 'Admins%'
+--     and (qual = 'true' or with_check = 'true');
+--
+-- Views in public bypass RLS unless security_invoker is set. Anything
+-- returned here needs `with (security_invoker = true)`:
+--
+--   select c.relname, c.reloptions from pg_class c
+--   join pg_namespace n on n.oid = c.relnamespace
+--   where n.nspname = 'public' and c.relkind = 'v';
+
+
+-- ============================================================
+-- 13. OPEN ITEMS — reviewed, not yet applied
+-- ============================================================
+-- Recorded here so they are not rediscovered from scratch. None are
+-- exploitable as they stand. Applying any of them means changing the live
+-- database AND this file in the same sitting.
+--
+-- a) IPv6 defeats the login rate limiter. check_login_rate_limit compares
+--    exact addresses (`ip is not distinct from v_ip`). IPv6 clients get a
+--    whole /64 and privacy extensions rotate the address within it, so one
+--    attacker has effectively unlimited identities and never reaches the
+--    10-attempt limit. Does not arise on IPv4, which is why it went
+--    unnoticed. Fix is to key on the /64 in BOTH functions, or they will not
+--    line up:
+--      and ip is not distinct from case
+--            when family(v_ip) = 6 then set_masklen(v_ip, 64) else v_ip end
+--    and in log_failed_login, store the masked value the same way.
+--    Verify inet_client_addr() returns your real address first — if the
+--    pooler is masking it, this is pointless and the limiter needs a
+--    client-supplied key instead.
+--
+-- b) enforce_room_capacity is SECURITY INVOKER, so its internal reads are
+--    subject to RLS. It works today only because "Public can view bookings"
+--    returns every row. If that SELECT policy is ever tightened — a likely
+--    response to the booked_by exposure noted in section 2 — the capacity
+--    check starts counting a filtered subset and silently permits
+--    overbooking. No error, no log. Making it SECURITY DEFINER decouples it.
+--
+-- c) base36_to_bigint has no length guard. It is anon-callable and multiplies
+--    without bound, so a long input raises a bigint overflow instead of
+--    returning null the way a bad character does. No security impact, but it
+--    is an unhandled exception reachable by anyone. Return null above ~12
+--    characters.
+--
+-- d) The app still derives creation time by decoding booking ids
+--    (js/utils/ids.js creationMs) rather than reading created_at, which now
+--    exists and is backfilled. Switching over is a small change in
+--    supabase-client.js and filters-sort.js, after which creationMs can go.
