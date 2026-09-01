@@ -1,0 +1,30 @@
+name: verify
+
+# Static checks only — no credentials, no network, no dependencies.
+# The live-database checks live in scripts/verify-db.mjs and are run by hand;
+# wiring them here would mean storing a key that bypasses RLS in a repo secret.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Static verification
+        run: node scripts/verify.mjs
+
+      - name: Syntax-check every module
+        run: |
+          # Parses each file as an ES module without executing it. Catches
+          # syntax errors that never surface until a user hits the code path.
+          find js -name '*.js' -print0 | xargs -0 -n1 node --check
