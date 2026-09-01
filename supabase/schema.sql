@@ -454,6 +454,89 @@ alter table public.login_attempt_log enable row level security;
 -- in section 6. Only the SECURITY DEFINER functions below touch this table.
 -- Do not add policies. Do not set FORCE ROW LEVEL SECURITY.
 
+-- Resolve the real caller address.
+--
+-- inet_client_addr() alone is WRONG here. Browser calls arrive via PostgREST,
+-- so it returns PostgREST's own address — identical for every user on the
+-- planet — which silently collapses the per-IP partition back to global. That
+-- is the original bug this section was meant to fix, and the comment below
+-- flagged it as unverified. It is now handled rather than assumed.
+--
+-- Order of preference:
+--   1. cf-connecting-ip  — set by Cloudflare in front of Supabase, and the
+--      most trustworthy of the three because the client cannot forge it past
+--      the edge.
+--   2. x-forwarded-for   — first entry is the originating client.
+--   3. inet_client_addr() — direct connections (SQL editor, psql, cron).
+--
+-- IPv6 is masked to its /64. A client gets a whole /64 and privacy extensions
+-- rotate the address inside it, so counting exact addresses gives one attacker
+-- unlimited identities. A /64 is normally one household or one handset, so
+-- collateral blocking is negligible.
+--
+-- HONEST LIMITATION: these headers are ultimately client-influenced. This
+-- makes evasion materially harder, not impossible. Section 8's note stands —
+-- a real answer needs a WAF in front of the domain.
+create or replace function public.client_ip()
+returns inet
+language plpgsql
+stable
+set search_path = public, pg_temp
+as $$
+declare
+  v_hdrs jsonb;
+  v_raw  text;
+  v_ip   inet;
+begin
+  begin
+    v_hdrs := current_setting('request.headers', true)::jsonb;
+  exception when others then
+    v_hdrs := null;
+  end;
+
+  if v_hdrs is not null then
+    -- Confirmed present on this project (dumped from request.headers):
+    -- cf-connecting-ip, sb-forwarded-for and x-forwarded-for all carried the
+    -- real client address. cf-connecting-ip first: Cloudflare sets it at the
+    -- edge and the client cannot forge it past that point.
+    v_raw := coalesce(
+      nullif(btrim(v_hdrs ->> 'cf-connecting-ip'), ''),
+      nullif(btrim(v_hdrs ->> 'sb-forwarded-for'), ''),
+      nullif(btrim(v_hdrs ->> 'x-real-ip'), ''),
+      nullif(btrim(split_part(coalesce(v_hdrs ->> 'x-forwarded-for', ''), ',', 1)), '')
+    );
+  end if;
+
+  if v_raw is not null then
+    begin
+      v_ip := v_raw::inet;
+    exception when others then
+      v_ip := null;   -- malformed or spoofed garbage: fall through
+    end;
+  end if;
+
+  v_ip := coalesce(v_ip, inet_client_addr());
+
+  if v_ip is null then
+    return null;
+  end if;
+
+  -- network() is required, not decorative: set_masklen alone changes the
+  -- netmask but LEAVES THE HOST BITS INTACT, so two addresses in the same /64
+  -- still compare unequal and nothing groups.
+  if family(v_ip) = 6 then
+    return network(set_masklen(v_ip, 64));
+  end if;
+
+  return v_ip;
+end;
+$$;
+
+-- Called only from the two SECURITY DEFINER functions below, which run as
+-- owner. No client needs execute, and withholding it keeps the section 12
+-- anon_can_call list at exactly five.
+revoke all on function public.client_ip() from public, anon, authenticated;
+
 create or replace function public.check_login_rate_limit()
 returns jsonb
 language plpgsql
@@ -465,14 +548,12 @@ declare
   v_limit      integer  := 10;
   v_window     interval := interval '5 minutes';
   v_oldest     timestamptz;
-  v_ip         inet     := inet_client_addr();
+  v_ip         inet     := public.client_ip();
 begin
   delete from public.login_attempt_log where created_at < now() - interval '30 minutes';
 
-  -- VERIFY THIS ON YOUR PROJECT: behind Supabase's connection pooler,
-  -- inet_client_addr() may report the pooler rather than the real client. If
-  -- `select inet_client_addr();` returns the same address from different
-  -- networks, this partition is ineffective and the limit is global again.
+  -- Partition key comes from client_ip() above, not inet_client_addr().
+  -- Do not "simplify" this back — see the note on client_ip().
   select count(*), min(created_at)
     into v_recent_cnt, v_oldest
   from public.login_attempt_log
@@ -499,7 +580,16 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  insert into public.login_attempt_log (ip) values (inet_client_addr());
+  -- MUST use the same derivation as check_login_rate_limit, or logged rows
+  -- never match the rows it counts and the limiter does nothing.
+  --
+  -- Caller note (js/api/auth.js): this RPC is fire-and-forget, but it must be
+  -- invoked with .then(), NOT .catch(). PostgrestBuilder is a lazy thenable
+  -- with no catch() method — `supabase.rpc(...).catch(...)` throws TypeError
+  -- and the request is never sent at all. That bug silently disabled this
+  -- limiter, the client-side attempt counter and the remaining-attempts
+  -- message, all three, for months.
+  insert into public.login_attempt_log (ip) values (public.client_ip());
 end;
 $$;
 
@@ -615,20 +705,6 @@ $$;
 -- Recorded here so they are not rediscovered from scratch. None are
 -- exploitable as they stand. Applying any of them means changing the live
 -- database AND this file in the same sitting.
---
--- a) IPv6 defeats the login rate limiter. check_login_rate_limit compares
---    exact addresses (`ip is not distinct from v_ip`). IPv6 clients get a
---    whole /64 and privacy extensions rotate the address within it, so one
---    attacker has effectively unlimited identities and never reaches the
---    10-attempt limit. Does not arise on IPv4, which is why it went
---    unnoticed. Fix is to key on the /64 in BOTH functions, or they will not
---    line up:
---      and ip is not distinct from case
---            when family(v_ip) = 6 then set_masklen(v_ip, 64) else v_ip end
---    and in log_failed_login, store the masked value the same way.
---    Verify inet_client_addr() returns your real address first — if the
---    pooler is masking it, this is pointless and the limiter needs a
---    client-supplied key instead.
 --
 -- b) enforce_room_capacity is SECURITY INVOKER, so its internal reads are
 --    subject to RLS. It works today only because "Public can view bookings"
