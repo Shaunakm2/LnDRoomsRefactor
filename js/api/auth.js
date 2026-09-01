@@ -112,7 +112,10 @@ export async function doLogin() {
       // logs attempts itself (it used to log successes too, which counted
       // normal use toward the lockout), so failures must be reported here.
       // Fire-and-forget: a logging outage must never block a real login.
-      supabase.rpc('log_failed_login').catch(() => {});
+      supabase.rpc('log_failed_login').then(
+  ({ error }) => { if (error) console.error('log_failed_login failed:', error); },
+  err => console.error('log_failed_login threw:', err)
+);
       setLoginAttempts(loginAttempts + 1);
       if (loginAttempts + 1 >= MAX_LOGIN_ATTEMPTS) {
         setLoginLockedUntil(Date.now() + LOCKOUT_MS);
