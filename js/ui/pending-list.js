@@ -20,7 +20,13 @@ let rejectTargetId = null;
 
 export function updatePendingDot() {
   const count = bookings.filter(b => b.status === 'Pending').length;
-  document.getElementById('nav-pending-dot').style.display = count > 0 ? '' : 'none';
+  const badge = document.getElementById('nav-pending-dot');
+  if (!badge) return;
+  // Shows the NUMBER waiting, not just that something is. Capped at 99+ so a
+  // backlog can't stretch the nav tab.
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.setAttribute('aria-label', `${count} pending request${count === 1 ? '' : 's'}`);
+  badge.style.display = count > 0 ? '' : 'none';
 }
 
 export function renderPendingRequests() {
