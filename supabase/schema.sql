@@ -53,6 +53,20 @@ create table if not exists public.bookings (
 alter table public.bookings
   add column if not exists created_at timestamptz default now();
 
+-- booking_id format. NOT cosmetic — this is the fix for a critical stored XSS.
+-- booking_id was `text primary key` with no format rule, and the public INSERT
+-- policy below never constrained it. The app interpolates the id directly into
+-- onclick="fn('<id>')" attributes in admin-table.js and pending-list.js with no
+-- escaping, so an anonymous user could insert a row whose id contained a quote
+-- mark plus JavaScript and have it execute in the admin's browser, with the
+-- admin's session. genId() in js/utils/ids.js only ever emits [a-z0-9], and
+-- legacy ids are alphanumeric, so nothing legitimate is excluded.
+alter table public.bookings
+  drop constraint if exists bookings_booking_id_format;
+alter table public.bookings
+  add constraint bookings_booking_id_format
+  check (booking_id ~ '^[A-Za-z0-9_-]{1,40}$');
+
 create index if not exists idx_bookings_date       on public.bookings (booking_date);
 create index if not exists idx_bookings_room_date  on public.bookings (room, booking_date);
 create index if not exists idx_bookings_status     on public.bookings (status);
@@ -272,6 +286,15 @@ create table if not exists public.bookings_archive (like public.bookings includi
 --
 -- RLS ON WITH ZERO POLICIES IS INTENTIONAL here too. Do not add policies. Do
 -- not set FORCE ROW LEVEL SECURITY.
+-- The archive was created with LIKE ... INCLUDING ALL, which copies the
+-- constraints that existed AT THAT MOMENT. It does not track later additions,
+-- so the booking_id format rule has to be repeated here.
+alter table public.bookings_archive
+  drop constraint if exists bookings_archive_booking_id_format;
+alter table public.bookings_archive
+  add constraint bookings_archive_booking_id_format
+  check (booking_id ~ '^[A-Za-z0-9_-]{1,40}$');
+
 alter table public.bookings_archive enable row level security;
 
 create or replace function public.archive_old_bookings(p_days integer default 90)
@@ -341,6 +364,12 @@ create table if not exists public.booking_rate_log (
 );
 create index if not exists idx_rate_log_actor_time
   on public.booking_rate_log (actor, created_at);
+
+-- txid collapses a batch insert into a single counted event. See the trigger
+-- function below for why that is load-bearing.
+alter table public.booking_rate_log add column if not exists txid bigint;
+create unique index if not exists booking_rate_log_actor_txid_idx
+  on public.booking_rate_log (actor, txid);
 alter table public.booking_rate_log enable row level security;
 -- RLS ON WITH ZERO POLICIES IS INTENTIONAL. This denies all access to anon and
 -- authenticated. Writes still work because rls_forced = false, so the owner
@@ -364,22 +393,37 @@ begin
     v_actor := 'auth:' || auth.uid()::text;
     v_limit := 5;
   else
-    v_actor := 'name:' || lower(trim(new.booked_by));
+    -- Was `'name:' || lower(trim(new.booked_by))`. booked_by comes from the
+    -- request body, so changing the name on each request bypassed the limit
+    -- completely. client_ip() reads the forwarded client address instead.
+    v_actor := 'ip:' || coalesce(public.client_ip()::text, 'unknown');
     v_limit := 2;
   end if;
 
   delete from public.booking_rate_log where created_at < now() - interval '2 minutes';
 
-  select count(*) into v_recent_cnt
+  -- count(distinct txid), NOT count(*).
+  --
+  -- This trigger is FOR EACH ROW and logs on every firing. A recurring booking
+  -- inserts every date in ONE batch, and each firing sees the rows the previous
+  -- firings inserted within the same transaction. With a public limit of 2, the
+  -- third date always raised and rolled the whole batch back — so recurring
+  -- requests spanning 3+ weekdays could never succeed at all.
+  --
+  -- All rows of one batch share txid_current(), so one user action now counts
+  -- once regardless of how many dates it covers.
+  select count(distinct txid) into v_recent_cnt
   from public.booking_rate_log
   where actor = v_actor and created_at > now() - interval '60 seconds';
 
   if v_recent_cnt >= v_limit then
-    raise exception 'Rate limit exceeded: max % booking(s) per minute. Please wait a moment and try again.', v_limit
+    raise exception 'Rate limit exceeded: max % booking action(s) per minute. Please wait a moment and try again.', v_limit
       using errcode = 'P0001';
   end if;
 
-  insert into public.booking_rate_log (actor) values (v_actor);
+  insert into public.booking_rate_log (actor, txid)
+  values (v_actor, txid_current())
+  on conflict do nothing;
   return new;
 end;
 $$;
@@ -706,12 +750,13 @@ $$;
 -- exploitable as they stand. Applying any of them means changing the live
 -- database AND this file in the same sitting.
 --
--- b) enforce_room_capacity is SECURITY INVOKER, so its internal reads are
---    subject to RLS. It works today only because "Public can view bookings"
---    returns every row. If that SELECT policy is ever tightened — a likely
---    response to the booked_by exposure noted in section 2 — the capacity
---    check starts counting a filtered subset and silently permits
---    overbooking. No error, no log. Making it SECURITY DEFINER decouples it.
+-- b) RETRACTED. An earlier note here claimed enforce_room_capacity was
+--    coupled to the public SELECT policy because it is SECURITY INVOKER.
+--    That was wrong: the function body reads no tables at all — only
+--    new.room, new.attendees and a CASE expression. There is nothing for RLS
+--    to filter, so SECURITY INVOKER is correct and no change is needed. It
+--    does still duplicate the seat counts from js/config.js ROOMS; keep the
+--    two in step.
 --
 -- c) base36_to_bigint has no length guard. It is anon-callable and multiplies
 --    without bound, so a long input raises a bigint overflow instead of
