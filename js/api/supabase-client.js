@@ -42,7 +42,19 @@ export async function loadData(silent = false) {
       .range(0, 4999);
 
     if (error) throw error;
-    const mapped = (data || []).map(r => ({
+    // Second layer of defence for the booking_id XSS (the first is a CHECK
+    // constraint in the database). booking_id is pasted directly into
+    // onclick="..." attributes by the admin table and pending list, so a value
+    // containing a quote mark would break out and run as JavaScript in the
+    // admin's session. genId() only ever produces [a-z0-9]; anything else has
+    // no legitimate source, so drop the row rather than render it.
+    const ID_OK = /^[A-Za-z0-9_-]{1,40}$/;
+    const mapped = (data || []).filter(r => {
+      const raw = String(r.booking_id || '').trim();
+      if (ID_OK.test(raw)) return true;
+      console.error('Dropped booking with unsafe booking_id:', JSON.stringify(raw));
+      return false;
+    }).map(r => ({
       id: String(r.booking_id || '').trim(),
       room: String(r.room || '').trim(),
       booker: String(r.booked_by || '').trim(),
