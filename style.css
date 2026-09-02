@@ -1250,19 +1250,61 @@
     font-size: 12px;
     outline: none;
   }
-  .cb-lg {
-    width: 16px; height: 16px;
+  /* SPECIFICITY NOTE — do not simplify these selectors.
+     `.form-group input` is (0,1,1) and sets width:100%, padding, border,
+     border-radius, background AND appearance:none. A bare `.cb-lg` is (0,1,0)
+     and loses to it, so the recurring checkbox rendered as a full-width empty
+     rounded box and shoved its label off the edge — in both the admin New
+     Booking form and the public request modal.
+     These were inline style attributes before, and inline styles beat every
+     class selector. Moving them to classes silently lost that override, so the
+     element qualifier is doing real work here. */
+  input[type="checkbox"].cb-lg,
+  .form-group input[type="checkbox"].cb-lg {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;          /* stops a flex parent shrinking it */
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    appearance: auto;         /* .form-group input sets none, which removes the tick */
+    -webkit-appearance: checkbox;
     accent-color: var(--accent);
     cursor: pointer;
     flex-shrink: 0;
   }
-  .cb-warn { accent-color: var(--warn); }
-  .cb-danger {
-    accent-color: var(--danger);
-    width: 15px; height: 15px;
-    cursor: pointer;
+
+  input[type="checkbox"].cb-warn,
+  .form-group input[type="checkbox"].cb-warn {
+    accent-color: var(--warn);
+    appearance: auto;
+    -webkit-appearance: checkbox;
   }
-  .cb-label {
+
+  input[type="checkbox"].cb-danger,
+  .form-group input[type="checkbox"].cb-danger {
+    width: 15px;
+    height: 15px;
+    min-width: 15px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    appearance: auto;
+    -webkit-appearance: checkbox;
+    accent-color: var(--danger);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* `.form-group label` is (0,1,1) and forces uppercase, letter-spacing,
+     display:block and margin-bottom:6px. Same problem as above.
+     Colour is deliberately NOT set, so it keeps inheriting --text-muted from
+     `.form-group label` exactly as the inline version did. */
+  label.cb-label,
+  .form-group label.cb-label {
     text-transform: none;
     letter-spacing: 0;
     font-size: 14px;
