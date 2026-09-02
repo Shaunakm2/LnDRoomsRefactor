@@ -203,6 +203,60 @@ function stripNoise(src) {
 }
 
 // ---------------------------------------------------------------
+// 4b. Regression guards for the three findings fixed in this pass.
+// ---------------------------------------------------------------
+{
+  const sql = read('supabase/schema.sql');
+  const client = read('js/api/supabase-client.js');
+  const auth = read('js/api/auth.js');
+
+  // CRITICAL: booking_id must be format-constrained in the DB and validated
+  // in the client. It is interpolated into onclick attributes unescaped.
+  /booking_id_format/.test(sql)
+    ? ok('booking_id CHECK constraint in schema')
+    : fail('booking_id CHECK constraint in schema', 'stored XSS vector is open');
+
+  /ID_OK|\^\[A-Za-z0-9_-\]\{1,40\}\$/.test(client)
+    ? ok('booking_id validated in loadData')
+    : fail('booking_id validated in loadData', 'unsafe ids reach the DOM');
+
+  // HIGH: the insert rate limiter must count transactions, not rows, or a
+  // batched recurring booking trips its own limit and rolls back.
+  /count\(distinct txid\)/i.test(sql)
+    ? ok('insert limiter counts transactions')
+    : fail('insert limiter counts transactions', 'recurring bookings will fail');
+
+  // HIGH: the lockout must actually be read, not just written.
+  /Date\.now\(\)\s*<\s*loginLockedUntil/.test(auth)
+    ? ok('login lockout is enforced')
+    : fail('login lockout is enforced', 'loginLockedUntil is set but never read');
+}
+
+// ---------------------------------------------------------------
+// 4c. Utility classes applied to form controls must be element-qualified.
+//     `.form-group input` is (0,1,1) and sets width:100% plus
+//     appearance:none. A bare `.cb-lg` (0,1,0) loses to it, and the recurring
+//     checkbox rendered as a full-width empty box with its label pushed off
+//     screen. These properties used to live in inline style attributes, which
+//     always beat class selectors — the specificity was doing real work and
+//     was lost silently in the conversion.
+// ---------------------------------------------------------------
+{
+  const css = read('style.css');
+  const bad = [];
+  for (const cls of ['cb-lg', 'cb-danger', 'cb-label']) {
+    // Every selector mentioning the class must name an element or an
+    // attribute, i.e. never appear as a lone `.cls {`.
+    const lone = new RegExp(`(^|[,\\s])\\.${cls}\\s*[,{]`, 'm');
+    if (lone.test(css)) bad.push(cls);
+  }
+  bad.length
+    ? fail('form-control classes are element-qualified',
+           `${bad.join(', ')} will lose to .form-group input/label`)
+    : ok('form-control classes are element-qualified');
+}
+
+// ---------------------------------------------------------------
 // 5. Service worker cache version bumped when shipped assets change.
 //    Bug history: stale modules served after deploy, making observed
 //    behaviour contradict the source being read.
