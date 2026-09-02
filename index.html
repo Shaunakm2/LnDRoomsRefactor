@@ -37,19 +37,19 @@
   <div class="nav-brand">
     <div>
       <div class="nav-title">IMS L&D Training Rooms (AHD)</div>
-      <div id="status-date" style="font-size:11px;color:var(--text-muted);margin-top:1px;">—</div>
+      <div id="status-date" class="t-muted-xs">—</div>
     </div>
   </div>
   <div class="nav-tabs">
     <button class="nav-tab active" onclick="showPage('status')">Room Status</button>
-    <button class="nav-tab" id="admin-btn" onclick="requireAdmin()">Admin Panel<span class="nav-pending-dot" id="nav-pending-dot" style="display:none"></span></button>
-    <button class="nav-tab" id="logout-btn" onclick="doLogout()" style="display:none;color:var(--danger);font-size:12px;">⏻ Logout</button>
+    <button class="nav-tab" id="admin-btn" onclick="requireAdmin()">Admin Panel<span class="nav-pending-count" id="nav-pending-dot" style="display:none" aria-label="pending requests"></span></button>
+    <button class="nav-tab field-error" id="logout-btn" onclick="doLogout()" style="display:none">⏻ Logout</button>
   </div>
   <div class="nav-right">
     <span id="count-free" style="display:none"></span>
     <span id="count-occ" style="display:none"></span>
     <span id="count-soon" style="display:none"></span>
-    <div id="occupancy-counter" style="font-size:13px;font-weight:600;color:var(--ok);margin-right:4px;"></div>
+    <div id="occupancy-counter" class="t-ok-sm"></div>
     <div id="clock">—</div>
   </div>
 </nav>
@@ -59,31 +59,31 @@
 
   <!-- TODAY'S TIMELINE -->
   <div class="timeline-section" id="timeline-section">
-    <div class="timeline-header" style="cursor:pointer;user-select:none;">
-      <div style="display:flex;align-items:center;gap:8px;" onclick="toggleTimeline()">
+    <div class="timeline-header clickable">
+      <div class="row-center-sm" onclick="toggleTimeline()">
         <div class="timeline-title">Daily Overview</div>
-        <span id="timeline-toggle-icon" style="font-size:12px;color:var(--text-muted);transition:transform 0.2s;transform:rotate(0deg)">▼</span>
+        <span id="timeline-toggle-icon" class="chevron">▼</span>
       </div>
-      <div class="timeline-controls" style="display:flex;align-items:center;gap:12px;">
+      <div class="timeline-controls row-center-lg">
         <button class="tl-nav-btn" onclick="shiftTimelineDay(-1)" title="Previous day" aria-label="Previous day">‹</button>
         <div class="timeline-day-tabs" id="timeline-day-tabs">
           <button class="tl-tab" id="tl-tab-yesterday" onclick="setTimelineDay('yesterday',event)">Yesterday</button>
           <button class="tl-tab tl-tab-active" id="tl-tab-today" onclick="setTimelineDay('today',event)">Today</button>
           <button class="tl-tab" id="tl-tab-tomorrow" onclick="setTimelineDay('tomorrow',event)">Tomorrow</button>
-          <div class="tl-tab" id="tl-date-wrap" style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;flex-shrink:0;">
-            <span aria-hidden="true" style="font-size:12px;cursor:pointer;" onclick="const el=document.getElementById('tl-custom-date'); if(el.showPicker){el.showPicker();}else{el.focus();}">📅</span>
-            <input type="date" id="tl-custom-date" onchange="setTimelineDay('custom',event)" title="Pick a date" style="border:none;background:transparent;padding:0;margin:0;font-size:12px;font-family:inherit;color:inherit;cursor:pointer;width:88px;flex-shrink:0;">
+          <div class="tl-tab pill-inline" id="tl-date-wrap">
+            <span aria-hidden="true" class="t-clickable" onclick="const el=document.getElementById('tl-custom-date'); if(el.showPicker){el.showPicker();}else{el.focus();}">📅</span>
+            <input type="date" id="tl-custom-date" onchange="setTimelineDay('custom',event)" title="Pick a date" class="day-nav-btn">
           </div>
         </div>
         <button class="tl-nav-btn" onclick="shiftTimelineDay(1)" title="Next day" aria-label="Next day">›</button>
-        <select id="floor-filter" onchange="renderStatusGrid();renderTimeline();" style="padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:12px;outline:none;">
+        <select id="floor-filter" onchange="renderStatusGrid();renderTimeline();" class="inline-select-sm">
           <option value="">All Floors</option>
           <option value="2nd Floor">2nd Floor</option>
           <option value="4th Floor">4th Floor</option>
         </select>
         <div class="timeline-legend" id="timeline-legend">
-          <div class="timeline-legend-item"><div class="timeline-legend-dot" style="background:#C0392B"></div>Booked</div>
-          <div class="timeline-legend-item"><div class="timeline-legend-dot" style="background:var(--border-light)"></div>Available</div>
+          <div class="timeline-legend-item"><div class="timeline-legend-dot is-booked"></div>Booked</div>
+          <div class="timeline-legend-item"><div class="timeline-legend-dot is-available"></div>Available</div>
         </div>
       </div>
     </div>
@@ -110,7 +110,7 @@
           <select id="f-room" required onchange="updateFCapacityHint()">
             <option value="">Select a room...</option>
           </select>
-          <div id="f-capacity-hint" style="display:none;margin-top:4px;"></div>
+          <div id="f-capacity-hint" class="mt-xs" style="display:none"></div>
         </div>
         <div class="form-group">
           <label>Booked By</label>
@@ -134,9 +134,9 @@
             <input type="number" id="f-attendees" min="1" max="200" placeholder="—" required>
           </div>
         </div>
-        <div class="form-group" style="display:flex;align-items:center;gap:10px;">
-          <input type="checkbox" id="f-recurring" onchange="toggleRecurring()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;">
-          <label for="f-recurring" style="text-transform:none;letter-spacing:0;font-size:14px;font-weight:500;cursor:pointer;margin:0;">Recurring booking (Mon–Fri)</label>
+        <div class="form-group row-center">
+          <input type="checkbox" id="f-recurring" onchange="toggleRecurring()" class="cb-lg">
+          <label for="f-recurring" class="cb-label">Recurring booking (Mon–Fri)</label>
         </div>
         <div id="recurring-end-wrap" style="display:none;">
           <div class="form-group">
@@ -163,9 +163,9 @@
         </div>
       </form>
 
-      <hr class="divider" style="margin-top:1.5rem">
-      <div style="margin-bottom:0.75rem; display:flex; align-items:center; justify-content:space-between;">
-        <span style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.6px; color:var(--text-muted)">Active Now</span>
+      <hr class="divider mt-lg">
+      <div class="section-head">
+        <span class="t-eyebrow">Active Now</span>
       </div>
       <div class="current-bookings-list" id="active-now-list"></div>
     </div>
@@ -176,14 +176,14 @@
       <div id="pending-section" class="pending-section" style="display:none">
         <div class="pending-header">
           <h3>⏳ Pending Requests <span class="pending-badge" id="pending-count">0</span></h3>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <label style="font-size:12px;color:var(--warn);font-weight:500;display:flex;align-items:center;gap:5px;cursor:pointer;">
-              <input type="checkbox" id="pending-select-all" class="booking-cb" onchange="togglePendingSelectAll(this)" style="accent-color:var(--warn);"> Select all
+          <div class="row-center-xs">
+            <label class="t-warn-link">
+              <input type="checkbox" id="pending-select-all" class="booking-cb cb-warn" onchange="togglePendingSelectAll(this)"> Select all
             </label>
           </div>
         </div>
-        <div id="pending-bulk-bar" style="display:none;padding:8px 16px;background:#FFF8EC;border-bottom:1px solid #F0D9B0;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span id="pending-bulk-label" style="font-size:13px;font-weight:600;color:var(--warn);flex:1;">0 selected</span>
+        <div id="pending-bulk-bar" class="notice-bar" style="display:none">
+          <span id="pending-bulk-label" class="t-warn-sm">0 selected</span>
           <button class="btn btn-sm btn-approve" onclick="bulkApprovePending()">✅ Approve All Selected</button>
           <button class="btn btn-sm btn-reject" onclick="bulkRejectPending()">❌ Reject All Selected</button>
           <button class="btn btn-sm btn-ghost" onclick="clearPendingSelection()">Clear</button>
@@ -193,21 +193,21 @@
 
       <div class="bookings-header">
         <h2>All Bookings</h2>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <div class="row-wrap">
           <div class="search-input-wrap">
             <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input type="text" id="search-input" placeholder="Search by name, room, or purpose..." oninput="onFilterChange()">
           </div>
-          <select id="filter-room" onchange="onFilterChange()" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
+          <select id="filter-room" onchange="onFilterChange()" class="inline-select">
             <option value="">All rooms</option>
           </select>
-          <select id="filter-date" onchange="onFilterChange()" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
+          <select id="filter-date" onchange="onFilterChange()" class="inline-select">
             <option value="">All dates</option>
             <option value="today">Today</option>
             <option value="upcoming">Upcoming</option>
             <option value="past">Past</option>
           </select>
-          <select id="filter-sort" onchange="onSortChange(this)" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;outline:none;">
+          <select id="filter-sort" onchange="onSortChange(this)" class="inline-select">
             <option value="bookingdate-asc" selected>Booking Date (Soonest)</option>
             <option value="bookingdate-desc">Booking Date (Latest)</option>
             <option value="datetime-desc">Recently Added</option>
@@ -216,11 +216,11 @@
             <option value="room-desc">Room (Z–A)</option>
             <option value="status-asc">Status (A–Z)</option>
           </select>
-          <label style="display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);font-size:14px;cursor:pointer;white-space:nowrap;user-select:none;">
-            <input type="checkbox" id="filter-conflicts-only" onchange="onFilterChange()" style="accent-color:var(--danger);width:15px;height:15px;cursor:pointer;">
+          <label class="filter-pill">
+            <input type="checkbox" id="filter-conflicts-only" onchange="onFilterChange()" class="cb-danger">
             ⚠️ Conflicts only
           </label>
-          <button class="btn btn-ghost" onclick="exportExcel()" style="white-space:nowrap">&#8595; Export Excel</button>
+          <button class="btn btn-ghost nowrap" onclick="exportExcel()">&#8595; Export Excel</button>
         </div>
       </div>
       <!-- Bulk action bar -->
@@ -249,9 +249,9 @@
           <tbody id="table-body"></tbody>
         </table>
       </div>
-      <div id="table-pagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:10px;">
-        <div id="table-count" style="font-size:13px;color:var(--text-muted);"></div>
-        <div id="pagination-controls" style="display:flex;align-items:center;gap:4px;"></div>
+      <div id="table-pagination" class="row-split">
+        <div id="table-count" class="t-muted-sm"></div>
+        <div id="pagination-controls" class="row-center-tight"></div>
       </div>
     </div>
   </div>
@@ -283,7 +283,7 @@
       <!-- Honeypot: invisible to real users (off-screen + aria-hidden), but a
            bot filling every field blindly will trip it. Never shown, never
            required for real submissions. -->
-      <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+      <div class="visually-hidden" aria-hidden="true">
         <label for="req-website">Website</label>
         <input type="text" id="req-website" name="website" tabindex="-1" autocomplete="off">
       </div>
@@ -292,7 +292,7 @@
         <select id="req-room" required onchange="updateReqCapacityHint()">
           <option value="">Select a room...</option>
         </select>
-        <div id="req-capacity-hint" style="display:none;font-size:12px;color:var(--text-muted);margin-top:4px;"></div>
+        <div id="req-capacity-hint" class="field-hint" style="display:none"></div>
       </div>
       <div class="form-group">
         <label>Your Name / Team</label>
@@ -312,9 +312,9 @@
           <input type="number" id="req-attendees" min="1" max="200" placeholder="—" required>
         </div>
       </div>
-      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
-        <input type="checkbox" id="req-recurring" onchange="toggleReqRecurring()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;">
-        <label for="req-recurring" style="text-transform:none;letter-spacing:0;font-size:14px;font-weight:500;cursor:pointer;margin:0;">Recurring request (Mon–Fri)</label>
+      <div class="form-group row-center">
+        <input type="checkbox" id="req-recurring" onchange="toggleReqRecurring()" class="cb-lg">
+        <label for="req-recurring" class="cb-label">Recurring request (Mon–Fri)</label>
       </div>
       <div id="req-recurring-end-wrap" style="display:none;">
         <div class="form-group">
@@ -344,8 +344,8 @@
         <div class="confirm-icon" id="req-confirm-icon">✅</div>
         <h3 id="req-confirm-title">Request Submitted!</h3>
         <p id="req-confirm-msg">Your booking request has been sent.<br>An admin will review and confirm it shortly.</p>
-        <div id="req-conflict-notice" style="display:none;margin-top:1rem;padding:10px 14px;background:#FFF8EC;border:1px solid #F0D9B0;border-radius:var(--radius);font-size:13px;color:#92600A;text-align:left;"></div>
-        <div class="modal-actions" style="justify-content:center;margin-top:1.5rem">
+        <div id="req-conflict-notice" class="notice-box" style="display:none"></div>
+        <div class="modal-actions center-mt-lg">
           <button class="btn btn-primary" onclick="closeRequestModal()">Done</button>
         </div>
       </div>
@@ -357,7 +357,7 @@
 <div class="modal-overlay modal-overlay-top" id="confirm-modal" style="display:none;">
   <div class="modal-box">
     <div class="modal-title" id="confirm-modal-title">Please confirm</div>
-    <div class="modal-sub" id="confirm-modal-message" style="white-space:pre-line;"></div>
+    <div class="modal-sub prewrap" id="confirm-modal-message"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="_resolveConfirmModal(false)">Cancel</button>
       <button class="btn btn-approve" id="confirm-modal-confirm-btn" onclick="_resolveConfirmModal(true)">Confirm</button>
@@ -369,7 +369,7 @@
   <div class="modal-box">
     <div class="modal-title">Reject Request?</div>
     <div class="modal-sub" id="reject-modal-sub">This request will be removed from pending.</div>
-    <div class="form-group" style="margin-top:0.5rem">
+    <div class="form-group mt-sm">
       <label>Reason (optional)</label>
       <input type="text" id="reject-reason" placeholder="e.g. Slot unavailable" maxlength="120">
     </div>
@@ -384,8 +384,8 @@
   <div class="modal-box">
     <div class="modal-title">Resolve Conflict</div>
     <div class="modal-sub">Describe how this was handled — shown on room cards and the admin view.</div>
-    <div id="resolve-conflict-details" style="font-size:12.5px;color:var(--text-muted);background:var(--surface2);border-radius:var(--radius);padding:10px 12px;margin:12px 0;line-height:1.6;white-space:pre-line;"></div>
-    <div class="form-group" style="margin-top:0.5rem">
+    <div id="resolve-conflict-details" class="help-panel"></div>
+    <div class="form-group mt-sm">
       <label>Note (optional)</label>
       <input type="text" id="resolve-conflict-note" placeholder="e.g. Confirmed with both — Varnica moved to Conf Room B" maxlength="200">
     </div>
@@ -456,9 +456,9 @@
 </div>
 
 <!-- LOADING OVERLAY -->
-<div id="loading-overlay" style="display:none;position:fixed;inset:0;background:rgba(20,18,14,0.5);z-index:400;align-items:center;justify-content:center;flex-direction:column;gap:12px;">
-  <div style="width:40px;height:40px;border:3px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-  <div id="loading-overlay-msg" style="color:white;font-size:14px;font-family:var(--font-body)">Please wait...</div>
+<div id="loading-overlay" class="loading-overlay" style="display:none">
+  <div class="loading-spinner"></div>
+  <div id="loading-overlay-msg" class="loading-msg">Please wait...</div>
 </div>
 
 <!-- SCHEDULE MODAL -->
@@ -469,7 +469,7 @@
         <h2 id="sched-modal-room">Room Schedule</h2>
         <p>Past 30 days &middot; Today &middot; Next 30 days — scroll to browse, click a free slot to contact admin</p>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <div class="row-center-sm row-nowrap">
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('sched-today-anchor')?.scrollIntoView({block:'center', behavior:'smooth'})">Jump to today</button>
         <button class="sched-close" onclick="closeSchedModal()">&#x2715;</button>
       </div>
