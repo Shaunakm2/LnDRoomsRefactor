@@ -156,38 +156,69 @@ Object.assign(window, {
 });
 
 // ============================================================
-// Session timeout (30 min inactivity, 5 min warning) — needs
+// Session timeout (10 min inactivity, 2 min warning) — needs
 // showPage/toast/state setters together, kept here rather than in
 // state.js to avoid a circular import.
+//
+// NOTE: state.js also declares SESSION_TIMEOUT_MS / lastActivityAt. Those
+// copies are DEAD — this file uses its own. Changing the values there does
+// nothing. Change them HERE.
+//
+// The last-activity timestamp is mirrored into localStorage because the
+// setInterval below only runs while a tab is open. Without persistence the
+// clock restarts at zero on every page load, so the timeout could only ever
+// fire in a tab left open and untouched — which is not how an unattended
+// session actually happens. Closing the browser overnight and returning to a
+// live admin panel was the symptom.
 // ============================================================
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
-const SESSION_WARNING_MS = 5 * 60 * 1000;
+const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+const SESSION_WARNING_MS = 2 * 60 * 1000;
+const ACTIVITY_KEY = 'ldrooms-last-activity';
 let _lastActivityAt = Date.now();
 let _sessionWarningShown = false;
+let _lastTouchWrite = 0;
+
 function _touchActivity() {
-  _lastActivityAt = Date.now();
+  const now = Date.now();
+  // mousemove fires dozens of times a second; throttle the localStorage write.
+  if (now - _lastTouchWrite < 5000) return;
+  _lastTouchWrite = now;
+  _lastActivityAt = now;
   _sessionWarningShown = false;
+  try { localStorage.setItem(ACTIVITY_KEY, String(now)); } catch (_) {}
 }
-document.addEventListener('click', _touchActivity);
-document.addEventListener('keydown', _touchActivity);
+
+// scroll and mousemove count as activity: at 10 minutes, someone reading a
+// long pending list without clicking is not idle, and logging them out
+// mid-task is the fastest way to get the timeout disabled again.
+['click', 'keydown', 'scroll', 'mousemove', 'touchstart'].forEach(
+  ev => document.addEventListener(ev, _touchActivity, { passive: true })
+);
+
+function _endSession() {
+  // expireSession() signs out at the Supabase level too. Clearing only the
+  // in-memory flags would leave the persisted session intact, and the
+  // restoreSession() call in init() would then log the admin straight back
+  // in on the next refresh — silently cancelling the idle timeout.
+  expireSession();
+  _sessionWarningShown = false;
+  try { localStorage.removeItem(ACTIVITY_KEY); } catch (_) {}
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) logoutBtn.style.display = 'none';
+  showPage('status');
+  toast('Session expired. Please log in again.');
+}
+
 setInterval(() => {
   if (!adminLoggedIn) return;
   const idleFor = Date.now() - _lastActivityAt;
   if (idleFor > SESSION_TIMEOUT_MS) {
-    // expireSession() signs out at the Supabase level too. Clearing only the
-    // in-memory flags would leave the persisted session intact, and the
-    // restoreSession() call in init() would then log the admin straight back
-    // in on the next refresh — silently cancelling the idle timeout.
-    expireSession();
-    _sessionWarningShown = false;
-    document.getElementById('logout-btn').style.display = 'none';
-    showPage('status');
-    toast('Session expired. Please log in again.');
+    _endSession();
   } else if (idleFor > SESSION_TIMEOUT_MS - SESSION_WARNING_MS && !_sessionWarningShown) {
     _sessionWarningShown = true;
-    toast('Your session will expire in 5 minutes due to inactivity — click anywhere to stay logged in.', false, 7000);
+    toast('Your session will expire in 2 minutes due to inactivity — click anywhere to stay logged in.', false, 7000);
   }
-}, 60000);
+}, 15000);
 
 window.addEventListener('beforeunload', e => {
   const booker = document.getElementById('f-booker')?.value;
@@ -204,6 +235,17 @@ async function init() {
   // Before anything else: if a valid admin session survived the reload,
   // pick it back up so a refresh doesn't appear to log the admin out.
   if (await restoreSession()) showPage('admin');
+
+  // ...but only if it has not gone stale while the browser was closed. This
+  // must run AFTER restoreSession(), since it depends on adminLoggedIn.
+  try {
+    const stored = Number(localStorage.getItem(ACTIVITY_KEY)) || 0;
+    if (stored && adminLoggedIn && Date.now() - stored > SESSION_TIMEOUT_MS) {
+      _endSession();
+    } else if (stored) {
+      _lastActivityAt = stored;
+    }
+  } catch (_) {}
 
   populateRoomSelects();
   document.getElementById('f-date').value = todayStr();
