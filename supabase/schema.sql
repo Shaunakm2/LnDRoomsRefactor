@@ -286,6 +286,21 @@ create table if not exists public.bookings_archive (like public.bookings includi
 --
 -- RLS ON WITH ZERO POLICIES IS INTENTIONAL here too. Do not add policies. Do
 -- not set FORCE ROW LEVEL SECURITY.
+-- LIKE ... INCLUDING ALL copies the shape of public.bookings AT THE MOMENT
+-- bookings_archive is created, and never tracks later changes. created_at was
+-- added to bookings by an `alter table`, so on any database where the archive
+-- predates that, the archive is one column short. Stated explicitly rather
+-- than relying on the LIKE, so a re-run of this file always converges.
+--
+-- No `default now()`: an archived row keeps whatever created_at it had in
+-- bookings, and a default would stamp today onto historic rows during the copy.
+alter table public.bookings_archive
+  add column if not exists created_at timestamptz;
+
+-- MAINTENANCE RULE: any column added to public.bookings must be added here
+-- AND to both column lists in archive_old_bookings() in the same change.
+-- The archive insert names every column, so a missing one fails loudly.
+
 -- The archive was created with LIKE ... INCLUDING ALL, which copies the
 -- constraints that existed AT THAT MOMENT. It does not track later additions,
 -- so the booking_id format rule has to be repeated here.
@@ -314,13 +329,31 @@ begin
     raise exception 'p_days must be >= 1 (got %).', p_days;
   end if;
 
+  -- Every column named on purpose. `insert into bookings_archive select *
+  -- from moved` matched columns by POSITION and required identical counts, so
+  -- a schema drift between the two tables either threw an opaque count
+  -- mismatch or — worse, if two same-typed columns had swapped order — wrote
+  -- values into the wrong columns silently. Naming them fails immediately and
+  -- says which column is missing.
   with moved as (
     delete from public.bookings
     where booking_date < (current_date - p_days)
       and status <> 'Pending'
-    returning *
+    returning
+      booking_id, room, booked_by, purpose, booking_date, start_time,
+      end_time, attendees, status, end_date, conflict_resolved,
+      conflict_note, created_at
   )
-  insert into public.bookings_archive select * from moved;
+  insert into public.bookings_archive (
+    booking_id, room, booked_by, purpose, booking_date, start_time,
+    end_time, attendees, status, end_date, conflict_resolved,
+    conflict_note, created_at
+  )
+  select
+    booking_id, room, booked_by, purpose, booking_date, start_time,
+    end_time, attendees, status, end_date, conflict_resolved,
+    conflict_note, created_at
+  from moved;
 
   get diagnostics v_count = row_count;
   return v_count;
@@ -740,6 +773,19 @@ $$;
 --   where schemaname = 'public' and tablename = 'bookings'
 --     and policyname like 'Admins%'
 --     and (qual = 'true' or with_check = 'true');
+--
+-- bookings and bookings_archive must have identical columns, or
+-- archive_old_bookings() fails. Expect zero rows:
+--
+--   select coalesce(b.column_name, a.column_name) as column_name,
+--          b.ordinal_position as in_bookings, a.ordinal_position as in_archive
+--   from      (select column_name, ordinal_position, data_type from information_schema.columns
+--              where table_schema='public' and table_name='bookings') b
+--   full join (select column_name, ordinal_position, data_type from information_schema.columns
+--              where table_schema='public' and table_name='bookings_archive') a
+--          on a.column_name = b.column_name
+--   where a.column_name is null or b.column_name is null
+--      or b.ordinal_position <> a.ordinal_position or b.data_type <> a.data_type;
 --
 -- Views in public bypass RLS unless security_invoker is set. Anything
 -- returned here needs `with (security_invoker = true)`:
