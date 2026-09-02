@@ -396,8 +396,14 @@ begin
     -- Was `'name:' || lower(trim(new.booked_by))`. booked_by comes from the
     -- request body, so changing the name on each request bypassed the limit
     -- completely. client_ip() reads the forwarded client address instead.
+    --
+    -- 20, not 2. Switching the key from name to IP changed what the number
+    -- means: an entire office shares one public IP behind NAT, so a limit of 2
+    -- would have blocked the third colleague to submit a request in any given
+    -- minute and read as a broken app. A per-person limit and a per-IP limit
+    -- need very different numbers. 20 still stops a scripted flood.
     v_actor := 'ip:' || coalesce(public.client_ip()::text, 'unknown');
-    v_limit := 2;
+    v_limit := 20;
   end if;
 
   delete from public.booking_rate_log where created_at < now() - interval '2 minutes';
