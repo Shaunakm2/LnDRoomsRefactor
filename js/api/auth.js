@@ -65,6 +65,9 @@ export async function doLogout() {
   await supabase.auth.signOut();
   setAdminLoggedIn(false);
   setSessionToken(null);
+  // Clear the persisted idle-timer stamp too, so a later page load doesn't
+  // evaluate a stale timestamp against a fresh session.
+  try { localStorage.removeItem('ldrooms-last-activity'); } catch (_) {}
   document.getElementById('logout-btn').style.display = 'none';
   showPage('status');
   toast('Logged out.');
@@ -73,6 +76,21 @@ export async function doLogout() {
 export async function doLogin() {
   const pw = document.getElementById('login-pw').value;
   if (!pw) return;
+
+  // Enforce the client-side lockout. setLoginLockedUntil() was being called
+  // below and the "Locked for 5 minutes" message shown, but NOTHING ever read
+  // the value — so the very next attempt went straight through. The message
+  // was cosmetic. This is UX feedback only; the real limits are the
+  // check_login_rate_limit RPC (10 / 5 min) and Supabase's own GoTrue limit
+  // (30 / 5 min). A page refresh clears this, which is exactly why the
+  // server-side limiter exists.
+  if (loginLockedUntil && Date.now() < loginLockedUntil) {
+    const secs = Math.ceil((loginLockedUntil - Date.now()) / 1000);
+    document.getElementById('login-error').textContent =
+      `Locked due to failed attempts. Try again in ${secs}s.`;
+    document.getElementById('login-error').classList.add('visible');
+    return;
+  }
   // Real, server-enforced rate limiting — this RPC call must succeed
   // before we're even allowed to attempt the actual sign-in. Unlike a
   // client-side-only counter (trivially bypassed by refreshing the page),
@@ -99,6 +117,9 @@ export async function doLogin() {
       setLoginAttempts(0);
       setLoginLockedUntil(0);
       setLastActivityAt(Date.now());
+      // app.js keeps its own idle clock in localStorage. Stamp it now so the
+      // session isn't judged against a timestamp from a previous session.
+      try { localStorage.setItem('ldrooms-last-activity', String(Date.now())); } catch (_) {}
       setAdminLoggedIn(true);
       setSessionToken(data.session.access_token);
       document.getElementById('logout-btn').style.display = '';
@@ -113,13 +134,16 @@ export async function doLogin() {
       // normal use toward the lockout), so failures must be reported here.
       // Fire-and-forget: a logging outage must never block a real login.
       supabase.rpc('log_failed_login').then(
-  ({ error }) => { if (error) console.error('log_failed_login failed:', error); },
-  err => console.error('log_failed_login threw:', err)
-);
+        ({ error }) => { if (error) console.error('log_failed_login failed:', error); },
+        err => console.error('log_failed_login threw:', err)
+      );
       setLoginAttempts(loginAttempts + 1);
       if (loginAttempts + 1 >= MAX_LOGIN_ATTEMPTS) {
         setLoginLockedUntil(Date.now() + LOCKOUT_MS);
-        setLoginAttempts(0);
+        // Do NOT reset the counter here. It used to call setLoginAttempts(0),
+        // so the moment the lockout was announced the budget was handed back
+        // and the next wrong password reported "4 attempts remaining". The
+        // counter is cleared on a SUCCESSFUL login instead (see above).
         document.getElementById('login-error').textContent = 'Too many failed attempts. Locked for 5 minutes.';
       } else {
         document.getElementById('login-error').textContent = `Incorrect password. ${MAX_LOGIN_ATTEMPTS - (loginAttempts + 1)} attempt(s) remaining.`;
