@@ -226,6 +226,19 @@ function stripNoise(src) {
     ? ok('insert limiter counts transactions')
     : fail('insert limiter counts transactions', 'recurring bookings will fail');
 
+  // MEDIUM: the archive insert must name its columns. A positional
+  // `insert into bookings_archive select * from moved` breaks the moment the
+  // two tables drift, and can write values into the wrong same-typed column.
+  /insert into public\.bookings_archive\s*\(/i.test(sql)
+    ? ok('archive insert names its columns')
+    : fail('archive insert names its columns', 'positional select * will break on drift');
+
+  // The archive must be told about created_at explicitly; LIKE INCLUDING ALL
+  // only copies the shape that existed when the archive was created.
+  /alter table public\.bookings_archive[\s\S]{0,120}created_at/i.test(sql)
+    ? ok('archive has created_at in schema')
+    : fail('archive has created_at in schema', 'archive_old_bookings will fail');
+
   // HIGH: the lockout must actually be read, not just written.
   /Date\.now\(\)\s*<\s*loginLockedUntil/.test(auth)
     ? ok('login lockout is enforced')
