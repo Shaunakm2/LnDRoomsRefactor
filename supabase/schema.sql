@@ -90,9 +90,54 @@ drop policy if exists "Admins can delete bookings"         on public.bookings;
 -- KNOWN EXPOSURE, accepted: booked_by, purpose, room and date are therefore
 -- world-readable to anyone who has the key, and the key is in the page
 -- source. Do not put anything confidential in `purpose`.
+--
+-- PARTIALLY MITIGATED by the restrictive policy immediately below, which
+-- limits anon to Pending and Confirmed rows. Rejected and cancelled history
+-- is no longer readable. ACTIVE bookings are still fully exposed, because the
+-- unauthenticated UI renders booked_by in three places — status grid,
+-- timeline and the 60-day schedule. Closing that needs a product decision,
+-- not a policy change.
 create policy "Public can view bookings"
   on public.bookings for select
   using (true);
+
+-- Narrows the policy above for unauthenticated callers.
+--
+-- RESTRICTIVE policies AND with the permissive ones rather than OR-ing, so
+-- this subtracts from `using (true)` without replacing it. Rejected and
+-- Cancelled rows stop being readable through the API.
+--
+-- WHY: rejected requests are the most sensitive slice of the exposure noted
+-- above. "X asked for this room on this date and was refused" is information
+-- nobody chose to publish, and the key that reads it is in the page source.
+-- Hiding them in the admin UI does nothing about the API.
+--
+-- WHY auth.role() AND NOT public.is_admin(): is_admin() is revoked from anon
+-- (see section 2), so calling it in a policy that anon evaluates raises a
+-- permission error on EVERY public SELECT and takes the whole app down.
+-- auth.role() is callable by anon. Only the admin can hold the authenticated
+-- role here: signups are disabled and the three admin policies below are
+-- gated on is_admin().
+--
+-- WHY the authenticated clause is needed at all: a policy with no explicit
+-- role, or `to public`, applies to the PUBLIC pseudo-role, of which EVERY
+-- role is a member — including authenticated. Without it this would hide
+-- rejected bookings from the ADMIN too and break the "Show rejected" toggle
+-- in the admin table, because admin reads go through the permissive policy
+-- above rather than a SELECT policy of their own.
+--
+-- SAFE because nothing in the public UI needs these rows: findAllConflicts()
+-- already skips Rejected and Cancelled, the status grid and timeline render
+-- Confirmed only, and cancel_own_booking() / release_own_booking() are
+-- SECURITY DEFINER and bypass RLS entirely.
+drop policy if exists "Public sees only active bookings" on public.bookings;
+create policy "Public sees only active bookings"
+  on public.bookings as restrictive for select
+  to public
+  using (
+    status in ('Pending','Confirmed')
+    or auth.role() = 'authenticated'
+  );
 
 -- Anyone can create a booking REQUEST, but it must land as Pending.
 -- Confirmed bookings are only ever created by a logged-in admin.
