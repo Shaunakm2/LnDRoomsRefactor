@@ -20,7 +20,7 @@ import { loadData } from '../api/supabase-client.js';
 import { apiCreate, apiUpdate, apiDelete, apiUpdateStatusBatch } from '../api/bookings.js';
 import { notifyTeams } from '../api/notifications.js';
 import { roomBadgesHtml } from './status-grid.js';
-import { openConflictModal } from './conflict-picker.js';
+import { openConflictModal, openApprovalConflictModal } from './conflict-picker.js';
 import { renderStatusGrid } from './status-grid.js';
 import { renderPendingRequests, updatePendingDot } from './pending-list.js';
 
@@ -103,7 +103,14 @@ export function renderTable() {
 
   const start = page * PAGE_SIZE + 1;
   const end = Math.min(start + PAGE_SIZE - 1, filtered.length);
-  document.getElementById('table-count').textContent = `Showing ${start}–${end} of ${filtered.length} bookings`;
+  // Say when rows are being withheld. Silently hiding records is how an admin
+  // concludes their data has vanished.
+  const hiddenRejected = document.getElementById('filter-show-rejected')?.checked
+    ? 0
+    : bookings.filter(b => b.status === 'Rejected').length;
+  document.getElementById('table-count').textContent =
+    `Showing ${start}–${end} of ${filtered.length} bookings`
+    + (hiddenRejected > 0 ? ` · ${hiddenRejected} rejected hidden` : '');
 
   const pc = document.getElementById('pagination-controls');
   if (totalPages <= 1) { pc.innerHTML = ''; return; }
@@ -575,17 +582,70 @@ export function clearBulkSelection() {
 export async function bulkApprove() {
   const ids = getSelectedIds();
   if (ids.length === 0) return;
-  if (!(await showConfirmModal(`Approve ${ids.length} booking(s)?`, 'Approve All', 'btn-approve'))) return;
+
+  // Two guards this function used to be missing, both of which
+  // pending-list.js's bulkApprovePending() has always had:
+  //
+  //   1. STATUS FILTER. It offered "Approve" for every selected row, including
+  //      rows already Confirmed — a pointless write that reported success.
+  //   2. CONFLICT CHECK. approvePending() runs findConflict() and diverts to
+  //      the conflict picker. This did neither, so bulk-approving a Rejected
+  //      booking silently reinstated it straight into an occupied slot,
+  //      bypassing a guard the single-approve path enforces. Two rejected
+  //      bookings for the same room and time could both be confirmed.
+  //
+  // Rejected rows ARE approvable — reinstating a rejected request is a real
+  // admin action — but they go through the same conflict check as Pending.
+  const alreadyConfirmed = [];
+  const candidates = [];
+  for (const id of ids) {
+    const b = bookings.find(x => x.id === id);
+    if (!b) continue;
+    if (b.status === 'Confirmed' || !b.status) alreadyConfirmed.push(b);
+    else candidates.push(b);
+  }
+
+  if (candidates.length === 0) {
+    toast(alreadyConfirmed.length
+      ? `Nothing to approve — all ${alreadyConfirmed.length} selected booking(s) are already confirmed.`
+      : 'Nothing to approve.', true);
+    return;
+  }
+
+  let prompt = `Approve ${candidates.length} booking(s)?`;
+  if (alreadyConfirmed.length > 0) {
+    prompt += ` ${alreadyConfirmed.length} already confirmed and will be skipped.`;
+  }
+  if (!(await showConfirmModal(prompt, 'Approve All', 'btn-approve'))) return;
+
+  // Split clean from conflicting, exactly as bulkApprovePending does.
+  const cleanIds = [];
+  const conflictItems = [];
+  for (const b of candidates) {
+    const conflict = findConflict(b.room, b.date, b.start, b.end, b.id);
+    if (conflict) {
+      conflictItems.push({ id: b.id, room: b.room, date: b.date, start: b.start,
+                           end: b.end, booker: b.booker, purpose: b.purpose, conflict });
+    } else {
+      cleanIds.push(b.id);
+    }
+  }
+
   showLoadingOverlay(true);
-  const prevStatuses = new Map(ids.map(id => [id, bookings.find(b => b.id === id)?.status]));
+  const prevStatuses = new Map(cleanIds.map(id => [id, bookings.find(b => b.id === id)?.status]));
   try {
-    ids.forEach(id => {
-      const idx = bookings.findIndex(b => b.id === id);
-      if (idx !== -1) bookings[idx].status = 'Confirmed';
-    });
-    await apiUpdateStatusBatch(ids, 'Confirmed');
-    toast(`${ids.length} booking(s) approved.`);
-    notifyTeams({ event: 'batchApproved', count: ids.length });
+    if (cleanIds.length > 0) {
+      cleanIds.forEach(id => {
+        const idx = bookings.findIndex(b => b.id === id);
+        if (idx !== -1) bookings[idx].status = 'Confirmed';
+      });
+      await apiUpdateStatusBatch(cleanIds, 'Confirmed');
+      notifyTeams({ event: 'batchApproved', count: cleanIds.length });
+    }
+    let msg = `${cleanIds.length} booking(s) approved.`;
+    if (conflictItems.length > 0) msg += ` ${conflictItems.length} have conflicts — resolve below.`;
+    if (alreadyConfirmed.length > 0) msg += ` ${alreadyConfirmed.length} skipped (already confirmed).`;
+    toast(msg);
     clearBulkSelection();
   } catch (e) {
     // Restore each row's previous status — the batch update is atomic, so a
@@ -598,12 +658,32 @@ export async function bulkApprove() {
   }
   finally { showLoadingOverlay(false); }
   renderPendingRequests(); renderTable(); renderStatusGrid(); updatePendingDot();
+
+  if (conflictItems.length > 0) openApprovalConflictModal(conflictItems);
 }
 
 export async function bulkCancel() {
-  const ids = getSelectedIds();
-  if (ids.length === 0) return;
-  if (!(await showConfirmModal(`Cancel ${ids.length} booking(s)?`, 'Cancel Bookings', 'btn-danger'))) return;
+  const allIds = getSelectedIds();
+  if (allIds.length === 0) return;
+
+  // Same reasoning as bulkApprove: cancelling something already Cancelled or
+  // Rejected is a no-op write that reports success and tells the admin nothing.
+  const skipped = [];
+  const ids = [];
+  for (const id of allIds) {
+    const b = bookings.find(x => x.id === id);
+    if (!b) continue;
+    if (b.status === 'Cancelled' || b.status === 'Rejected') skipped.push(b);
+    else ids.push(id);
+  }
+  if (ids.length === 0) {
+    toast(`Nothing to cancel — all ${skipped.length} selected booking(s) are already cancelled or rejected.`, true);
+    return;
+  }
+
+  let prompt = `Cancel ${ids.length} booking(s)?`;
+  if (skipped.length > 0) prompt += ` ${skipped.length} already cancelled or rejected and will be skipped.`;
+  if (!(await showConfirmModal(prompt, 'Cancel Bookings', 'btn-danger'))) return;
   showLoadingOverlay(true);
   try {
     await apiUpdateStatusBatch(ids, 'Cancelled');
@@ -678,6 +758,9 @@ export function exportExcel() {
   const roomSuffix = filterRoomId ? '-' + roomName(filterRoomId).toLowerCase().replace(/\s+/g, '-') : '';
   XLSX.writeFile(wb, `room-bookings${roomSuffix}-${todayStr()}.xlsx`);
 
+  // bookings.length, not the filtered length: the point of this message is to
+  // tell the admin the export is narrower than the full dataset — which now
+  // includes rejected rows hidden by default.
   const totalCount = bookings.length;
   toast(rows.length === totalCount
     ? 'Excel file downloaded (' + rows.length + ' bookings).'
