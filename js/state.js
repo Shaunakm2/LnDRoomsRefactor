@@ -21,6 +21,15 @@ export function setAdminLoggedIn(v) { adminLoggedIn = v; }
 export let sessionToken = null; // issued by server on login, required for all admin writes
 export function setSessionToken(v) { sessionToken = v; }
 
+// Admin-table bulk selection, held here rather than read from the DOM.
+// getSelectedIds() used to be `querySelectorAll('.row-cb:checked')`, but only
+// the current page's rows exist in the DOM — so paginating, or a background
+// poll re-rendering the table, silently discarded the selection while the
+// bulk bar still displayed the old count. Mutate in place with add/delete;
+// use setSelectedIds() only to REPLACE the set (see the live-bindings note).
+export let selectedIds = new Set();
+export function setSelectedIds(v) { selectedIds = v; }
+
 export let deleteTargetId = null;
 export function setDeleteTargetId(v) { deleteTargetId = v; }
 
