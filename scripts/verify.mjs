@@ -31,6 +31,15 @@ function walk(dir, out = []) {
 }
 const jsFiles = walk('js');
 
+// Strip ONLY comments, keeping string literals intact. Needed by checks that
+// look for a specific string literal in the source — stripNoise() blanks those
+// too, which silently made one such check unable to ever fail.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+}
+
 // Strip comments and string literals so pattern checks don't match prose or
 // the very comments that warn about the pattern.
 function stripNoise(src) {
@@ -238,6 +247,46 @@ function stripNoise(src) {
   /alter table public\.bookings_archive[\s\S]{0,120}created_at/i.test(sql)
     ? ok('archive has created_at in schema')
     : fail('archive has created_at in schema', 'archive_old_bookings will fail');
+
+  // HIGH: the recurring-EDIT path must create replacements BEFORE deleting
+  // the original. Delete-first meant a mid-way failure destroyed the booking
+  // with nothing in its place and no way to reconstruct it.
+  {
+    // stripNoise first: the explanatory comment in that block mentions
+    // apiDelete(id) by name, which made a naive indexOf report the delete as
+    // running first. The check was flagging its own documentation.
+    const at = stripNoise(read('js/ui/admin-table.js'));
+    const m = at.match(/if \(id && isRecurring\)[\s\S]*?\n  \}/);
+    if (!m) {
+      warn('recurring edit creates before deleting', 'could not locate the block');
+    } else {
+      const iCreate = m[0].indexOf('apiCreate(');
+      const iDelete = m[0].indexOf('apiDelete(id)');
+      (iCreate !== -1 && iDelete !== -1 && iCreate < iDelete)
+        ? ok('recurring edit creates before deleting')
+        : fail('recurring edit creates before deleting',
+               'apiDelete(id) runs first — a failure destroys the original');
+    }
+  }
+
+  // MEDIUM: bulk selection must come from state, not the DOM. Only the current
+  // page's rows exist in the DOM, so a DOM-derived selection was truncated by
+  // pagination and by the 60s poll while the count kept showing the old value.
+  {
+    // stripComments, NOT stripNoise: this looks for a string literal, and
+    // stripNoise blanks string literals — which made this check unable to
+    // fail at all. Caught by mutation-testing it.
+    const at = stripComments(read('js/ui/admin-table.js'));
+    /querySelectorAll\('\.row-cb:checked'\)/.test(at)
+      ? fail('bulk selection is state-backed', 'still reading :checked from the DOM')
+      : ok('bulk selection is state-backed');
+  }
+
+  // The admin capacity override must exist in the schema, or the UI's
+  // "Book anyway?" prompt is a button that cannot work.
+  /auth\.role\(\)\s*=\s*'authenticated'[\s\S]{0,200}return new;/.test(sql)
+    ? ok('admin capacity override in schema')
+    : fail('admin capacity override in schema', 'Book Anyway will always fail');
 
   // HIGH: the lockout must actually be read, not just written.
   /Date\.now\(\)\s*<\s*loginLockedUntil/.test(auth)
