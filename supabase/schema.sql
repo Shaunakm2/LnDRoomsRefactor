@@ -486,6 +486,27 @@ as $$
 declare
   v_cap integer;
 begin
+  -- Admin override. admin-table.js asks "this room holds N but the booking has
+  -- M attendees — book anyway?"; before this early return the database refused
+  -- regardless, so that button could never work and the admin got only the
+  -- generic "NOT saved" message with no reason. Attendee counts are estimates
+  -- and people stand, so an admin overriding the seat count is legitimate.
+  --
+  -- Public requests stay hard-capped: an anonymous requester has no standing
+  -- to overbook, and the cap is what stops 500 people in a 5-seat room.
+  --
+  -- `authenticated` is only ever the admin: signups are disabled in the
+  -- dashboard AND the three admin policies in section 2 are gated on
+  -- public.is_admin().
+  --
+  -- Keep this SECURITY INVOKER. It reads no tables, so there is nothing for
+  -- RLS to filter, and as DEFINER auth.role() would report the owner instead
+  -- of the caller and hand the override to everyone.
+  if auth.role() = 'authenticated' then
+    return new;
+  end if;
+
+  -- NOTE: these seat counts duplicate ROOMS in js/config.js. Keep them in step.
   v_cap := case new.room
     when 'chanakya' then 45
     when 'conf2f'   then 5
