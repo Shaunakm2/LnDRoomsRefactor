@@ -269,6 +269,35 @@ function stripNoise(src) {
     }
   }
 
+  // The "Show rejected" toggle must exist in the markup AND be read by the
+  // filter. Either half alone is a silent no-op: a checkbox nothing reads, or
+  // a filter with no way to switch it off.
+  {
+    const html = read('index.html');
+    const fs = stripComments(read('js/domain/filters-sort.js'));
+    const inHtml = /id="filter-show-rejected"/.test(html);
+    const inFilter = /filter-show-rejected/.test(fs) && /status !== 'Rejected'/.test(fs);
+    (inHtml && inFilter)
+      ? ok('show-rejected toggle is wired end to end')
+      : fail('show-rejected toggle is wired end to end',
+             `markup: ${inHtml ? 'yes' : 'MISSING'}, filter: ${inFilter ? 'yes' : 'MISSING'}`);
+  }
+
+  // Bulk approve must run a conflict check. approvePending() always did;
+  // admin-table's bulkApprove() did not, so bulk-approving a Rejected booking
+  // silently reinstated it into an occupied slot, bypassing the guard.
+  {
+    const at = stripNoise(read('js/ui/admin-table.js'));
+    const m = at.match(/export async function bulkApprove\(\)[\s\S]*?\n\}/);
+    if (!m) {
+      warn('bulkApprove checks conflicts', 'could not locate the function');
+    } else {
+      /findConflict\(/.test(m[0])
+        ? ok('bulkApprove checks conflicts')
+        : fail('bulkApprove checks conflicts', 'can confirm a booking into an occupied slot');
+    }
+  }
+
   // MEDIUM: bulk selection must come from state, not the DOM. Only the current
   // page's rows exist in the DOM, so a DOM-derived selection was truncated by
   // pagination and by the 60s poll while the count kept showing the old value.
