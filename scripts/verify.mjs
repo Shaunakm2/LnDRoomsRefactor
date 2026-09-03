@@ -269,6 +269,46 @@ function stripNoise(src) {
     }
   }
 
+  // The default sort in state.js must match the <option selected> in
+  // index.html. They are set independently, so a mismatch shows one label
+  // while the table is ordered by something else — and this dropdown has a
+  // history of being silently wrong.
+  {
+    const html = read('index.html');
+    const st = read('js/state.js');
+    const sel = html.match(/<option value="([^"]+)"\s+selected>/);
+    const f = st.match(/export let sortField\s*=\s*'([^']+)'/);
+    const d = st.match(/export let sortDir\s*=\s*'([^']+)'/);
+    if (!sel || !f || !d) {
+      warn('default sort matches selected option', 'could not read one of the three values');
+    } else {
+      const want = `${f[1]}-${d[1]}`;
+      sel[1] === want
+        ? ok('default sort matches selected option', want)
+        : fail('default sort matches selected option',
+               `index.html selects "${sel[1]}" but state.js defaults to "${want}"`);
+    }
+  }
+
+  // The restrictive SELECT policy must exempt authenticated, or it applies to
+  // the admin too (PUBLIC includes every role) and the "Show rejected" toggle
+  // shows nothing. It must also NOT call is_admin(), which is revoked from
+  // anon and would error on every public SELECT.
+  {
+    const m = sql.match(/create policy "Public sees only active bookings"[\s\S]*?;/);
+    if (!m) {
+      warn('restrictive SELECT policy exempts admin', 'policy not present in schema');
+    } else if (/is_admin\(\)/.test(m[0])) {
+      fail('restrictive SELECT policy exempts admin',
+           'uses is_admin(), which anon cannot execute — every public SELECT would error');
+    } else if (!/auth\.role\(\)\s*=\s*'authenticated'/.test(m[0])) {
+      fail('restrictive SELECT policy exempts admin',
+           'no authenticated clause — admin cannot see rejected bookings');
+    } else {
+      ok('restrictive SELECT policy exempts admin');
+    }
+  }
+
   // The "Show rejected" toggle must exist in the markup AND be read by the
   // filter. Either half alone is a silent no-op: a checkbox nothing reads, or
   // a filter with no way to switch it off.
