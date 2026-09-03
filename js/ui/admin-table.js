@@ -7,7 +7,8 @@
 import { ROOMS, roomName, PAGE_SIZE } from '../config.js';
 import {
   bookings, tablePage, setTablePage, tablePageLocked, setTablePageLocked,
-  deleteTargetId, setDeleteTargetId, setBookings, setSortField, setSortDir
+  deleteTargetId, setDeleteTargetId, setBookings, setSortField, setSortDir,
+  selectedIds, setSelectedIds
 } from '../state.js';
 import { getFilteredBookings, bookingTimeStatus } from '../domain/filters-sort.js';
 import { todayStr, minutesSinceMidnight, addDaysStr, isOvernight, getWeekdays } from '../domain/time.js';
@@ -27,8 +28,6 @@ import { renderPendingRequests, updatePendingDot } from './pending-list.js';
 export function renderTable() {
   if (!tablePageLocked) setTablePage(0);
   const tbody = document.getElementById('table-body');
-  const prevSelected = new Set(getSelectedIds());
-
   const filtered = getFilteredBookings();
 
   if (filtered.length === 0) {
@@ -77,7 +76,7 @@ export function renderTable() {
       </div>`;
     }
     html += `<tr>
-      <td class="cb-cell"><input type="checkbox" class="booking-cb row-cb" data-id="${b.id}" onchange="onRowCbChange()" title="Select"></td>
+      <td class="cb-cell"><input type="checkbox" class="booking-cb row-cb" data-id="${b.id}" onchange="onRowCbChange(this)" title="Select"></td>
       <td class="td-room">${escHtml(roomName(b.room))}</td>
       <td>${escHtml(b.booker)}</td>
       <td style="color:var(--text-muted)">${escHtml(displayPurpose(b.purpose) || '—')}${conflictNote}</td>
@@ -95,8 +94,10 @@ export function renderTable() {
   }
   tbody.innerHTML = html;
 
+  // Selection lives in state.js, so rows selected on another page stay
+  // selected and simply re-tick when that page is rendered again.
   document.querySelectorAll('.row-cb').forEach(cb => {
-    if (prevSelected.has(cb.dataset.id)) cb.checked = true;
+    if (selectedIds.has(cb.dataset.id)) cb.checked = true;
   });
   updateBulkBar();
 
@@ -361,30 +362,39 @@ export async function submitBooking(e) {
       showError(`Conflicts on ${conflictDates.length} date(s): ${conflictDates.slice(0, 3).map(fmtDate).join(', ')}${conflictDates.length > 3 ? '…' : ''}. Resolve conflicts first.`);
       return;
     }
+    // ORDER MATTERS: create the replacements FIRST, delete the original LAST.
+    //
+    // This used to call apiDelete(id) up front. If the delete succeeded and
+    // any subsequent apiCreate failed — network blip, rate limit, a trigger
+    // rejection — the original booking was permanently gone with nothing in
+    // its place, and no local rollback could reconstruct it.
+    //
+    // Creating first makes the worst case orphaned duplicates, which the
+    // admin can see and delete, instead of an unrecoverable gap. The rule:
+    // destructive operations go last.
+    const createdRows = [];
     try {
       showLoadingOverlay(true);
-      await apiDelete(id);
-      setBookings(bookings.filter(b => b.id !== id));
       for (const d of dates) {
         const computedEndDate = minutesSinceMidnight(end) < minutesSinceMidnight(start) ? addDaysStr(d, 1) : d;
         const booking = { id: genId(), room, booker, purpose, date: d, start, end, attendees: attendees || '', status: 'Confirmed', endDate: computedEndDate };
+        await apiCreate(booking);
+        createdRows.push(booking);
         bookings.push(booking);
-        try {
-          await apiCreate(booking);
-        } catch (err) {
-          // This path already deleted the original, so a partial failure
-          // leaves the database in a genuinely mixed state that no local
-          // rollback can reconstruct. Drop the row that failed, then reload
-          // from the server so the admin sees exactly what was actually
-          // saved rather than an optimistic guess.
-          setBookings(bookings.filter(b => b.id !== booking.id));
-          throw err;
-        }
       }
+      // Every replacement is committed, so it is now safe to remove the original.
+      await apiDelete(id);
+      setBookings(bookings.filter(b => b.id !== id));
       toast(`Booking updated across ${dates.length} date(s).`);
     } catch (err) {
+      // Best-effort cleanup of whatever we managed to create. If this also
+      // fails the original is still intact, so the admin is left with
+      // duplicates rather than a missing booking.
+      for (const c of createdRows) {
+        try { await apiDelete(c.id); } catch (_) {}
+      }
       await loadData();
-      showError('Some dates could not be saved. The list has been reloaded from the server — check which dates exist before retrying.');
+      showError('Could not update the recurring booking. The original has been left unchanged. The list was reloaded from the server — check it before retrying.');
     } finally { showLoadingOverlay(false); }
     resetForm(); renderTable(); renderActiveNow(); renderStatusGrid();
     return;
@@ -479,38 +489,84 @@ export async function confirmDelete() {
 }
 
 // ---- Bulk selection (admin table) ----
+// Backed by state.js's selectedIds, NOT by the DOM. Only the current page's
+// rows exist in the DOM, so a DOM-derived selection was silently truncated by
+// pagination and by the 60-second poll re-rendering the table — while the
+// bulk bar kept showing the pre-truncation count.
 export function getSelectedIds() {
-  return Array.from(document.querySelectorAll('.row-cb:checked')).map(cb => cb.dataset.id);
+  // Prune as we read: a selected booking can be deleted by a bulk action, or
+  // disappear on a refresh, and acting on an id that no longer exists just
+  // produces a confusing failure.
+  const live = new Set(bookings.map(b => b.id));
+  let pruned = false;
+  for (const id of selectedIds) {
+    if (!live.has(id)) { selectedIds.delete(id); pruned = true; }
+  }
+  if (pruned) updateBulkBarLabel();
+  return [...selectedIds];
+}
+
+function visibleRowCbs() {
+  return Array.from(document.querySelectorAll('.row-cb'));
+}
+
+function updateBulkBarLabel() {
+  const bar = document.getElementById('bulk-bar');
+  const label = document.getElementById('bulk-count-label');
+  if (!bar || !label) return;
+  const total = selectedIds.size;
+  if (total === 0) { bar.classList.remove('visible'); return; }
+  bar.classList.add('visible');
+  const onPage = visibleRowCbs().filter(cb => selectedIds.has(cb.dataset.id)).length;
+  // Spell out when the selection reaches beyond this page, so a bulk action
+  // never affects more rows than the admin can see.
+  label.textContent = onPage === total
+    ? `${total} selected`
+    : `${total} selected (${onPage} on this page)`;
 }
 
 export function updateBulkBar() {
-  const ids = getSelectedIds();
-  const bar = document.getElementById('bulk-bar');
-  const label = document.getElementById('bulk-count-label');
-  if (!bar) return;
-  if (ids.length > 0) {
-    bar.classList.add('visible');
-    label.textContent = ids.length + ' selected';
-  } else {
-    bar.classList.remove('visible');
-  }
-  const allCbs = document.querySelectorAll('.row-cb');
+  updateBulkBarLabel();
+  const cbs = visibleRowCbs();
+  const selOnPage = cbs.filter(cb => selectedIds.has(cb.dataset.id)).length;
   const selAll = document.getElementById('select-all-cb');
   if (selAll) {
-    selAll.checked = allCbs.length > 0 && ids.length === allCbs.length;
-    selAll.indeterminate = ids.length > 0 && ids.length < allCbs.length;
+    // Reflects THIS PAGE only, matching what the header checkbox acts on.
+    selAll.checked = cbs.length > 0 && selOnPage === cbs.length;
+    selAll.indeterminate = selOnPage > 0 && selOnPage < cbs.length;
   }
 }
 
-export function onRowCbChange() { updateBulkBar(); }
+export function onRowCbChange(cb) {
+  if (cb && cb.dataset && cb.dataset.id) {
+    if (cb.checked) selectedIds.add(cb.dataset.id);
+    else selectedIds.delete(cb.dataset.id);
+  } else {
+    // Defensive: an older inline handler called this with no argument. Fall
+    // back to reconciling the visible rows so the state can't drift.
+    for (const c of visibleRowCbs()) {
+      if (c.checked) selectedIds.add(c.dataset.id);
+      else selectedIds.delete(c.dataset.id);
+    }
+  }
+  updateBulkBar();
+}
 
+// Acts on the current page only. The label in index.html says "Select page"
+// for that reason — a control that silently selected hundreds of off-screen
+// rows would be worse than one with a clear scope.
 export function toggleSelectAll(masterCb) {
-  document.querySelectorAll('.row-cb').forEach(cb => cb.checked = masterCb.checked);
+  for (const cb of visibleRowCbs()) {
+    cb.checked = masterCb.checked;
+    if (masterCb.checked) selectedIds.add(cb.dataset.id);
+    else selectedIds.delete(cb.dataset.id);
+  }
   updateBulkBar();
 }
 
 export function clearBulkSelection() {
-  document.querySelectorAll('.row-cb').forEach(cb => cb.checked = false);
+  setSelectedIds(new Set());
+  visibleRowCbs().forEach(cb => cb.checked = false);
   const sa = document.getElementById('select-all-cb');
   if (sa) { sa.checked = false; sa.indeterminate = false; }
   updateBulkBar();
@@ -530,6 +586,7 @@ export async function bulkApprove() {
     await apiUpdateStatusBatch(ids, 'Confirmed');
     toast(`${ids.length} booking(s) approved.`);
     notifyTeams({ event: 'batchApproved', count: ids.length });
+    clearBulkSelection();
   } catch (e) {
     // Restore each row's previous status — the batch update is atomic, so a
     // failure means none of them changed server-side.
@@ -555,6 +612,7 @@ export async function bulkCancel() {
       if (idx !== -1) bookings[idx].status = 'Cancelled';
     });
     toast(`${ids.length} booking(s) cancelled.`);
+    clearBulkSelection();
   } catch (e) { toast('Error during bulk cancel.', true); }
   finally { showLoadingOverlay(false); }
   renderTable(); renderActiveNow(); renderStatusGrid(); renderPendingRequests(); updatePendingDot();
@@ -571,6 +629,7 @@ export async function bulkDelete() {
       setBookings(bookings.filter(b => b.id !== id));
     }
     toast(`${ids.length} booking(s) deleted.`);
+    clearBulkSelection();
   } catch (e) { toast('Error during bulk delete.', true); }
   finally { showLoadingOverlay(false); }
   renderTable(); renderActiveNow(); renderStatusGrid(); renderPendingRequests();
