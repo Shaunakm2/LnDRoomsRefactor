@@ -342,6 +342,14 @@ create table if not exists public.bookings_archive (like public.bookings includi
 alter table public.bookings_archive
   add column if not exists created_at timestamptz;
 
+-- MUST be nullable, matching public.bookings. bookings.created_at is nullable
+-- on purpose (legacy rows have no recoverable creation time), and the archive
+-- had it NOT NULL — so the first legacy row to age past the archive window
+-- made archive_old_bookings() fail with a not-null violation. An archive is a
+-- copy of history: it has to tolerate exactly what the live table tolerates.
+alter table public.bookings_archive
+  alter column created_at drop not null;
+
 -- MAINTENANCE RULE: any column added to public.bookings must be added here
 -- AND to both column lists in archive_old_bookings() in the same change.
 -- The archive insert names every column, so a missing one fails loudly.
@@ -843,15 +851,24 @@ $$;
 -- bookings and bookings_archive must have identical columns, or
 -- archive_old_bookings() fails. Expect zero rows:
 --
+-- Compares nullability as well as name, position and type. An earlier version
+-- of this query omitted is_nullable, which is precisely how the archive's
+-- NOT NULL created_at went unnoticed until a real archive run failed.
+--
 --   select coalesce(b.column_name, a.column_name) as column_name,
---          b.ordinal_position as in_bookings, a.ordinal_position as in_archive
---   from      (select column_name, ordinal_position, data_type from information_schema.columns
+--          b.ordinal_position as in_bookings, a.ordinal_position as in_archive,
+--          b.is_nullable as null_live, a.is_nullable as null_arch
+--   from      (select column_name, ordinal_position, data_type, is_nullable
+--              from information_schema.columns
 --              where table_schema='public' and table_name='bookings') b
---   full join (select column_name, ordinal_position, data_type from information_schema.columns
+--   full join (select column_name, ordinal_position, data_type, is_nullable
+--              from information_schema.columns
 --              where table_schema='public' and table_name='bookings_archive') a
 --          on a.column_name = b.column_name
 --   where a.column_name is null or b.column_name is null
---      or b.ordinal_position <> a.ordinal_position or b.data_type <> a.data_type;
+--      or b.ordinal_position <> a.ordinal_position
+--      or b.data_type   <> a.data_type
+--      or b.is_nullable <> a.is_nullable;
 --
 -- Views in public bypass RLS unless security_invoker is set. Anything
 -- returned here needs `with (security_invoker = true)`:
@@ -859,6 +876,45 @@ $$;
 --   select c.relname, c.reloptions from pg_class c
 --   join pg_namespace n on n.oid = c.relnamespace
 --   where n.nspname = 'public' and c.relkind = 'v';
+
+
+-- ============================================================
+-- 12b. SCHEDULED JOBS (pg_cron)
+-- ------------------------------------------------------------
+-- Not created by this file, because pg_cron lives outside the public schema
+-- and re-running schema.sql should not silently reschedule infrastructure.
+-- Recorded here so it is not rediscovered from scratch — the whole reason
+-- three security problems went unnoticed for months was state existing in
+-- the database and nowhere else.
+--
+--   Job name : archive-old-bookings-daily
+--   Schedule : 30 21 * * *   (21:30 UTC = 03:00 IST next day)
+--   Command  : select public.archive_old_bookings(90)
+--   Created  : setup_daily_archive.sql
+--
+-- Effect: bookings whose booking_date is more than 90 days past, and whose
+-- status is not 'Pending', move from public.bookings to
+-- public.bookings_archive. Future bookings are untouched — a future date can
+-- never satisfy `booking_date < current_date - 90`.
+--
+-- CONSEQUENCE, deliberate: public.bookings holds a rolling ~90-day window,
+-- so the admin table, search and Excel export only ever show that window.
+-- Anything older is queryable in SQL only; there is no UI for the archive.
+-- Utilisation or trend analysis must UNION both tables.
+--
+-- CONSEQUENCE, unhandled: Pending requests are never archived, at any age.
+-- A request nobody answered stays in public.bookings indefinitely. Left
+-- alone on purpose — auto-rejecting someone's request is a policy decision,
+-- not a cron job's call.
+--
+-- Health check:
+--   select jobname, schedule, active from cron.job;
+--   select status, return_message, start_time from cron.job_run_details
+--   where jobid = (select jobid from cron.job where jobname = 'archive-old-bookings-daily')
+--   order by start_time desc limit 5;
+--
+-- To remove:  select cron.unschedule('archive-old-bookings-daily');
+-- ============================================================
 
 
 -- ============================================================
