@@ -29,9 +29,17 @@ export function getFilteredBookings() {
   const filterRoom = document.getElementById('filter-room').value;
   const filterDate = document.getElementById('filter-date').value;
   const conflictsOnly = document.getElementById('filter-conflicts-only')?.checked;
+  // Rejected rows are kept in the database as a record, but they are noise in
+  // the working list and they made the bulk bar dangerous: selecting them
+  // offered "Approve", which reinstated a request that had been turned down —
+  // often one rejected for a conflict in the first place. Hidden by default,
+  // shown on request. Optional chaining so a missing element (older cached
+  // index.html) falls back to hiding rather than throwing.
+  const showRejected = document.getElementById('filter-show-rejected')?.checked;
   const today = todayStr();
 
   let filtered = [...bookings];
+  if (!showRejected) filtered = filtered.filter(b => b.status !== 'Rejected');
   if (conflictsOnly) filtered = filtered.filter(b => (b.status === 'Pending' || b.status === 'Confirmed') && getLiveConflicts(b).length > 0);
   if (search) {
     filtered = filtered.filter(b =>
