@@ -41,9 +41,14 @@ export let tablePage = 0;
 export function setTablePage(v) { tablePage = v; }
 export let tablePageLocked = false;
 export function setTablePageLocked(v) { tablePageLocked = v; }
-export let sortField = 'bookingdate'; // 'bookingdate' | 'datetime' | 'room' | 'booker' | 'status'
+// Default sort. MUST match whichever <option> carries `selected` on
+// #filter-sort in index.html — the dropdown does not drive these on load, so
+// a mismatch shows one label while the table is ordered by another.
+// Implemented fields: 'bookingdate' | 'datetime' | 'room' | 'status'.
+// ('booker' appears in no dropdown option and falls through to 'datetime'.)
+export let sortField = 'datetime';
 export function setSortField(v) { sortField = v; }
-export let sortDir = 'asc'; // 'asc' | 'desc'
+export let sortDir = 'desc'; // 'asc' | 'desc'
 export function setSortDir(v) { sortDir = v; }
 
 // Login rate-limit UI feedback (real enforcement is server-side — see
