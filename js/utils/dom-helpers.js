@@ -50,12 +50,23 @@ export function toast(msg, isErr, durationMs) {
 // one missed call to this function — treat this as load-bearing security
 // code, not a cosmetic helper.
 export function escHtml(s) {
-  if (!s) return '';
+  // `if (!s)` also caught 0 and false, turning a legitimate value into an
+  // empty string. Only null and undefined should become ''.
+  if (s === null || s === undefined) return '';
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    // Single quotes matter the moment anything is interpolated into a
+    // single-quoted attribute. No current call site does, so this is
+    // pre-emptive — but this function is where a future developer will
+    // reasonably assume escaping is complete.
+    //
+    // NOT a substitute for proper handling when injecting into a JS string
+    // literal inside an HTML attribute. That is what the booking_id XSS did,
+    // and escaping was the wrong tool for it: use data- attributes.
+    .replace(/'/g, '&#39;');
 }
 
 export function updateClock() {
