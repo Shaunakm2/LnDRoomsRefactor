@@ -290,6 +290,55 @@ function stripNoise(src) {
     }
   }
 
+  // The table must not reset its page on every render: the 60s poll and every
+  // tab-focus call renderTable(), which ejected the admin from page 3.
+  {
+    const at = stripNoise(read('js/ui/admin-table.js'));
+    const m = at.match(/export function renderTable\(\)[\s\S]{0,400}/);
+    (m && /setTablePage\(0\)/.test(m[0]))
+      ? fail('renderTable does not reset the page', 'poll will eject the admin from page N')
+      : ok('renderTable does not reset the page');
+  }
+
+  // The service worker must not cache failed responses. Without a status
+  // check, a 404/500/proxy block page was cached and served as the app.
+  {
+    const sw = stripNoise(read('sw.js'));
+    /response\.ok/.test(sw)
+      ? ok('service worker caches only successes')
+      : fail('service worker caches only successes', 'error responses will poison the cache');
+  }
+
+  // A failed refresh must not blank the list. loadData(true) runs every 60s,
+  // so setBookings([]) on error emptied the whole UI on one dropped packet.
+  {
+    const c = stripNoise(read('js/api/supabase-client.js'));
+    const m = c.match(/catch \(e\)[\s\S]{0,600}?\n  \}/);
+    (m && /bookings\.length === 0/.test(m[0]))
+      ? ok('failed refresh keeps stale data')
+      : fail('failed refresh keeps stale data', 'a network blip will blank the UI');
+  }
+
+  // escHtml must escape single quotes and must not swallow falsy values.
+  {
+    const d = stripComments(read('js/utils/dom-helpers.js'));
+    const problems = [];
+    if (!/&#39;/.test(d)) problems.push("no single-quote escaping");
+    if (/if \(!s\) return ''/.test(d)) problems.push("`if (!s)` swallows 0 and false");
+    problems.length
+      ? fail('escHtml is complete', problems.join('; '))
+      : ok('escHtml is complete');
+  }
+
+  // A failed edit must not clear the form — the error says "try again" and
+  // there would be nothing left to retry from.
+  {
+    const at = stripNoise(read('js/ui/admin-table.js'));
+    /if \(!editFailed\) resetForm\(\)/.test(at)
+      ? ok('failed edit preserves the form')
+      : fail('failed edit preserves the form', 'resetForm() runs unconditionally');
+  }
+
   // Sign-in and sign-out must refetch. The restrictive SELECT policy makes the
   // visible row set role-dependent, so a page loaded while logged out holds
   // the ANON view — and logging in does not change it. That is how the
