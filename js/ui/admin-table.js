@@ -6,7 +6,7 @@
 
 import { ROOMS, roomName, PAGE_SIZE } from '../config.js';
 import {
-  bookings, tablePage, setTablePage, tablePageLocked, setTablePageLocked,
+  bookings, tablePage, setTablePage,
   deleteTargetId, setDeleteTargetId, setBookings, setSortField, setSortDir,
   selectedIds, setSelectedIds
 } from '../state.js';
@@ -26,7 +26,14 @@ import { renderPendingRequests, updatePendingDot } from './pending-list.js';
 
 // ---- Table rendering ----
 export function renderTable() {
-  if (!tablePageLocked) setTablePage(0);
+  // Deliberately does NOT reset tablePage. It used to do
+  // `if (!tablePageLocked) setTablePage(0)`, and goToPage()'s lock only
+  // survived that one render — so the 60-second poll and every tab-focus
+  // ejected the admin from page 3 back to page 1, mid-read. The page is
+  // reset where the USER changes what is displayed: onFilterChange() and
+  // onSortChange() both call setTablePage(0) already. Lines below clamp
+  // tablePage to the available range, so a page that no longer exists after
+  // a data change falls back safely.
   const tbody = document.getElementById('table-body');
   const filtered = getFilteredBookings();
 
@@ -130,10 +137,12 @@ export function renderTable() {
 }
 
 export function goToPage(page) {
+  // tablePageLocked used to be set around this call, purely to stop
+  // renderTable() resetting the page it had just been asked to show. That
+  // reset is gone, so the lock guards nothing. state.js's tablePageLocked
+  // and setTablePageLocked are now unused and can be deleted.
   setTablePage(page);
-  setTablePageLocked(true);
   renderTable();
-  setTablePageLocked(false);
 }
 
 // ---- Filter/sort controls (index.html) ----
@@ -339,6 +348,7 @@ export async function submitBooking(e) {
       showError(msg);
       return;
     }
+    let editFailed = false;
     try {
       showLoadingOverlay(true);
       const origStatus = bookings.find(b => b.id === id)?.status || 'Confirmed';
@@ -357,8 +367,18 @@ export async function submitBooking(e) {
         throw err;
       }
       toast('Booking updated.');
-    } catch (err) { showError('Could not save the booking — nothing was changed. Check your connection and try again.'); } finally { showLoadingOverlay(false); }
-    resetForm(); renderTable(); renderActiveNow(); renderStatusGrid();
+      editFailed = false;
+    } catch (err) {
+      editFailed = true;
+      showError('Could not save the booking — nothing was changed. Check your connection and try again.');
+    } finally { showLoadingOverlay(false); }
+    // Only clear the form on success. resetForm() used to run
+    // unconditionally, so a failed edit wiped the admin's typing AND showed
+    // an error telling them to try again — with nothing left to retry from.
+    // The new-booking path further down already got this right; this one
+    // did not.
+    if (!editFailed) resetForm();
+    renderTable(); renderActiveNow(); renderStatusGrid();
     return;
   }
 
