@@ -290,6 +290,22 @@ function stripNoise(src) {
     }
   }
 
+  // Active Now must filter on STATUS as well as time. bookingTimeStatus()
+  // answers only "is now inside this window" and knows nothing about status,
+  // so using it alone put Rejected and Cancelled bookings under ACTIVE NOW
+  // with a Release button, while the timeline showed the room as free.
+  {
+    // stripComments, NOT stripNoise: this looks for the string literal
+    // 'Confirmed', and stripNoise blanks string literals — which would make
+    // the check fail permanently regardless of the code. Second time this
+    // exact trap has come up; see the note on stripComments above.
+    const at = stripComments(read('js/ui/admin-table.js'));
+    const m = at.match(/export function renderActiveNow\(\)[\s\S]{0,700}/);
+    (m && /status === 'Confirmed'/.test(m[0]))
+      ? ok('Active Now filters by status')
+      : fail('Active Now filters by status', 'rejected/cancelled bookings will show as active');
+  }
+
   // The table must not reset its page on every render: the 60s poll and every
   // tab-focus call renderTable(), which ejected the admin from page 3.
   {
