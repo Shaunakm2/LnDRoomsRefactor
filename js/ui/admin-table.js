@@ -167,7 +167,16 @@ export function onSortChange(sel) {
 
 // ---- Active-now sidebar widget ----
 export function renderActiveNow() {
-  const active = bookings.filter(b => bookingTimeStatus(b) === 'active');
+  // MUST filter on status as well as time. bookingTimeStatus() answers only
+  // "is now inside this booking's window" — it deliberately knows nothing
+  // about status, which is correct for a time function but wrong as the sole
+  // filter here. Without the status check, a Rejected or Cancelled booking
+  // whose window happens to contain the current time appeared under ACTIVE
+  // NOW, complete with a "Release Now" button, while the timeline correctly
+  // showed the room as free. Two components disagreeing about the same row.
+  const active = bookings.filter(b =>
+    (b.status === 'Confirmed' || !b.status) && bookingTimeStatus(b) === 'active'
+  );
   const el = document.getElementById('active-now-list');
   if (active.length === 0) {
     el.innerHTML = `<div style="font-size:13px;color:var(--text-faint);padding:8px 0;">No active bookings right now.</div>`;
@@ -191,6 +200,16 @@ export async function adminReleaseEarly(bookingId) {
   const b = bookings.find(x => x.id === bookingId);
   if (!b) return;
   if (!(await showConfirmModal(`Release ${roomName(b.room)} now? Booked by ${b.booker}, scheduled until ${fmtTime(b.end)}.`, 'Release Now', 'btn-approve'))) return;
+  // Status as well as time. adminReleaseEarly writes via apiUpdate, which
+  // has no server-side status check of its own (unlike release_own_booking,
+  // which requires Confirmed), so releasing a Rejected or Cancelled booking
+  // would have silently rewritten its end time. Unreachable from the UI now
+  // that renderActiveNow filters by status, but this is the function that
+  // actually performs the write.
+  if (b.status !== 'Confirmed' && b.status) {
+    toast(`This booking is ${String(b.status).toLowerCase()}, not active.`, true);
+    return;
+  }
   if (bookingTimeStatus(b) !== 'active') {
     toast('This booking is no longer active.', true);
     return;
