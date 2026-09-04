@@ -290,6 +290,22 @@ function stripNoise(src) {
     }
   }
 
+  // Sign-in and sign-out must refetch. The restrictive SELECT policy makes the
+  // visible row set role-dependent, so a page loaded while logged out holds
+  // the ANON view — and logging in does not change it. That is how the
+  // "Show rejected" toggle ended up with nothing to reveal.
+  {
+    const a = stripNoise(read('js/api/auth.js'));
+    const login  = a.match(/export async function doLogin[\s\S]*?\n\}/);
+    const logout = a.match(/export async function doLogout[\s\S]*?\n\}/);
+    const missing = [];
+    if (!login  || !/loadData\(/.test(login[0]))  missing.push('doLogin');
+    if (!logout || !/loadData\(/.test(logout[0])) missing.push('doLogout');
+    missing.length
+      ? fail('login/logout refetch data', `${missing.join(' and ')} do not call loadData()`)
+      : ok('login/logout refetch data');
+  }
+
   // The restrictive SELECT policy must exempt authenticated, or it applies to
   // the admin too (PUBLIC includes every role) and the "Show rejected" toggle
   // shows nothing. It must also NOT call is_admin(), which is revoked from
