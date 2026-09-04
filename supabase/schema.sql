@@ -870,6 +870,19 @@ $$;
 --      or b.data_type   <> a.data_type
 --      or b.is_nullable <> a.is_nullable;
 --
+-- Views in public must ALSO not be granted to anon or authenticated.
+-- Supabase's default privileges grant ALL on every new table and view in
+-- public, so a view is exposed the moment it exists unless the grant is
+-- explicitly revoked. Expect zero rows:
+--
+--   select c.relname, g.grantee, g.privilege_type
+--   from pg_class c
+--   join pg_namespace n on n.oid = c.relnamespace
+--   join information_schema.role_table_grants g
+--     on g.table_schema = n.nspname and g.table_name = c.relname
+--   where n.nspname = 'public' and c.relkind = 'v'
+--     and g.grantee in ('anon','authenticated','PUBLIC');
+--
 -- Views in public bypass RLS unless security_invoker is set. Anything
 -- returned here needs `with (security_invoker = true)`:
 --
