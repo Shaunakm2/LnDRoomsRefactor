@@ -3,7 +3,7 @@
 // else in api/ assumes `supabase` (exported here) is already initialized.
 
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from '../config.js';
-import { setBookings } from '../state.js';
+import { bookings, setBookings } from '../state.js';
 import { creationMs } from '../utils/ids.js';
 import { toast, showLoadingOverlay } from '../utils/dom-helpers.js';
 
@@ -75,8 +75,15 @@ export async function loadData(silent = false) {
     setBookings(mapped);
   } catch (e) {
     console.error('Load error', e);
-    setBookings([]);
-    toast('Could not load bookings. Check connection.', true);
+    // Do NOT blank the list. This used to call setBookings([]), and since
+    // loadData(true) runs every 60 seconds, one dropped packet emptied every
+    // room card, the timeline and the admin table until the next successful
+    // poll up to a minute later. Showing slightly stale data beats throwing
+    // away good data because a refresh failed.
+    if (bookings.length === 0) setBookings([]);
+    toast(silent
+      ? 'Refresh failed — showing last known data.'
+      : 'Could not load bookings. Check connection.', true);
   } finally {
     if (!silent) showLoadingOverlay(false);
   }
