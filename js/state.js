@@ -39,8 +39,10 @@ export function setTimelineDay(v) { timelineDay = v; }
 // Admin table pagination/sort
 export let tablePage = 0;
 export function setTablePage(v) { tablePage = v; }
-export let tablePageLocked = false;
-export function setTablePageLocked(v) { tablePageLocked = v; }
+// tablePageLocked/setTablePageLocked removed: they existed only to stop
+// renderTable() resetting the page it had just been told to show. That reset
+// is gone (it ejected the admin from page N every 60 seconds), so the lock
+// guarded nothing.
 // Default sort. MUST match whichever <option> carries `selected` on
 // #filter-sort in index.html — the dropdown does not drive these on load, so
 // a mismatch shows one label while the table is ordered by another.
