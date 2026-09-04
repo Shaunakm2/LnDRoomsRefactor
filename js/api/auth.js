@@ -5,7 +5,7 @@
 // navigation itself via the return value, but that's a bigger behavioral
 // change than a straight refactor should make. Flagged here for later.
 
-import { supabase } from './supabase-client.js';
+import { supabase, loadData } from './supabase-client.js';
 import { ADMIN_EMAIL } from '../config.js';
 import {
   adminLoggedIn,
@@ -68,6 +68,11 @@ export async function doLogout() {
   // Clear the persisted idle-timer stamp too, so a later page load doesn't
   // evaluate a stale timestamp against a fresh session.
   try { localStorage.removeItem('ldrooms-last-activity'); } catch (_) {}
+  // Refetch as anon for the same reason as in doLogin: otherwise the browser
+  // keeps showing admin-visible rows (rejected, cancelled) after sign-out
+  // until the next page load.
+  try { await loadData(); } catch (_) {}
+  window.dispatchEvent(new CustomEvent('ldrooms:data-refreshed'));
   document.getElementById('logout-btn').style.display = 'none';
   showPage('status');
   toast('Logged out.');
@@ -126,6 +131,20 @@ export async function doLogin() {
       document.getElementById('login-modal').style.display = 'none';
       document.getElementById('login-pw').value = '';
       document.getElementById('login-error').classList.remove('visible');
+      // REFETCH AFTER LOGIN. What the client can see is now role-dependent:
+      // the restrictive policy "Public sees only active bookings" hides
+      // Rejected and Cancelled rows from anon. If the page was loaded while
+      // logged out, the in-memory bookings array holds the ANON view, and
+      // logging in does not change it — so the admin table was missing every
+      // rejected booking and the "Show rejected" toggle had nothing to
+      // reveal. Before that policy existed, anon and admin saw identical
+      // data, which is why this gap never mattered until now.
+      //
+      // Fire the event AFTER loadData so listeners render fresh data. app.js
+      // owns the render calls: doing them here would mean importing half the
+      // ui layer into the api layer.
+      try { await loadData(); } catch (_) {}
+      window.dispatchEvent(new CustomEvent('ldrooms:data-refreshed'));
       showPage('admin');
       toast('Welcome, Admin.');
     } else {
