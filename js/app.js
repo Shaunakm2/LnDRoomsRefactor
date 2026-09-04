@@ -274,6 +274,19 @@ async function init() {
     }
   }, 60000);
 
+  // auth.js refetches after sign-in and sign-out, because the restrictive
+  // policy "Public sees only active bookings" makes the visible row set
+  // role-dependent. It fires this event rather than calling renders itself,
+  // which would mean importing the ui layer into the api layer.
+  window.addEventListener('ldrooms:data-refreshed', () => {
+    updatePendingDot();
+    renderStatusGrid();
+    renderTimeline();
+    renderTable();
+    renderActiveNow();
+    renderPendingRequests();
+  });
+
   document.addEventListener('visibilitychange', async () => {
     if (!document.hidden) {
       await loadData(true);
